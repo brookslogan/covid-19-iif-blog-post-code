@@ -1,0 +1,652 @@
+---
+title: "Forecast Evaluation with Mixed Models"
+author: "Jacob Bien"
+date: "8/2/2020"
+output: html_document
+params:
+    forecaster_names: "COVIDhub-ensemble;hayman_ens_v1_selhub8;ensemble1_cdc_all_dup;ensemble3_cdc_all_dup;ensemble3train_cdc_all_dup;cdf_rwt2imp_ens_v0_selhub8;ensemble1_cdc_impute;ensemble3_cdc_impute;ensemble3train_cdc_impute;cdf_rwt2_ens_v0_selhub8;cdf_raw_ens_v0_selhub8;cdf_rwt2_ens_v0_selhub8_v1pre;cdf_rwt2_ens_v0_selhub8_v1"
+    eval_ahead:     "1"
+    eval_locations: "ALL"
+    min_available_aheads_per_timeloc: "1"
+    path_to_github: "../../../covid-19"
+    plot_prefix:    ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+forecaster_names = strsplit(params[["forecaster_names"]], ";")[[1L]]
+eval_ahead = as.integer(params[["eval_ahead"]])
+eval_locations = strsplit(params[["eval_locations"]],";")[[1L]]
+path_to_github = params[["path_to_github"]]
+plot_prefix = params[["plot_prefix"]]
+min_available_aheads_per_timeloc = as.integer(params[["min_available_aheads_per_timeloc"]])
+
+cat(forecaster_names)
+cat(eval_ahead)
+cat(eval_locations)
+```
+
+## Introduction
+
+Consider the task of evaluating and comparing forecasters based on some metric of interest such as 
+
+- the weighted interval score,
+- the coverage probability of an interval, or
+- a measure of whether the quantiles are calibrated.
+
+The forecasters are evaluated across a set of locations and forecast dates.  Here we suggest using mixed effects models to compare forecasters while accounting for the dependence structure induced by evaluating them at a common set of locations and forecast dates.
+
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(evalforecast)
+library(ordinal) # must load before lme4 for lme4 implementations to survive
+library(lme4)
+library(effects)
+source(file.path(path_to_github,
+                 "hospitalization",
+                 "pipeline",
+                 "evaluation_pipeline",
+                 "prob_forecast_evaluation_coverage.R"))
+```
+
+This first code chunk simply loads the score cards for several methods we'll be comparing.
+```{r}
+ensemble_scorecard_meta <-
+  locate_cards("../ensemble_scorecards",
+                                        dir_order = c("ahead",
+                                                      "response",
+                                                      "geo_type",
+                                                      "incidence_period",
+                                                      "n_locations",
+                                                      "forecaster")) %>%
+    dplyr::filter(forecaster %in% forecaster_names)
+scorecard_meta <- locate_cards("ensemble_evaluation",
+                               dir_order = c("ahead",
+                                             "response",
+                                             "geo_type",
+                                             "incidence_period",
+                                             "n_locations",
+                                             "forecaster")) %>%
+    dplyr::filter(forecaster %in% forecaster_names) %>%
+    dplyr::anti_join(ensemble_scorecard_meta[c("ahead","response","geo_type","incidence_period","n_locations","forecaster")],
+                     by=c("ahead","response","geo_type","incidence_period","n_locations","forecaster"))
+forecaster.colors = c(
+  "COVIDhub-baseline"             = "#003300",
+  "COVIDhub-ensemble"             = "#336633",
+  "hayman_ens_v1_selhub8"         = "#888888",
+  "qspace_ew_md_ens_v1_inconly"   = "#88AA44",
+  "qspace_ew_md_ens_v1_all"       = "#88AA44",
+  "qspace_ew_md_ens_v1_selhub8"   = "#88EE44",
+  "qspace_ew_mean_ens_v1_inconly" = "#88AAAA",
+  "qspace_ew_mean_ens_v1_all"     = "#88AAAA",
+  "qspace_ew_mean_ens_v1_selhub8" = "#88EEAA",
+  "ensemble1_cdc_dup"             = "#444444",
+  "ensemble3_cdc_dup"             = "#999944",
+  "ensemble23_cdc_dup"            = "#EEEE44",
+  "ensemble1_cdc_impute"          = "#004444",
+  "ensemble3_cdc_impute"          = "#009944",
+  "ensemble23_cdc_impute"         = "#00EE44",
+  "ensemble3train_cdc_impute"     = "#009999",
+  "ensemble3_comb4_impute"        = "#449944",
+  "ensemble1_cdc_all_dup"         = "#AA00AA",
+  "ensemble3_cdc_all_dup"         = "#CC00AA",
+  "ensemble23_cdc_all_dup"        = "#FF00AA",
+  "ensemble3train_cdc_all_dup"    = "#FF00FF",
+  "ensemble1_cdc_all_dup_re"      = "#AA00AA",
+  "ensemble3_cdc_all_dup_re"      = "#CC00AA",
+  "ensemble23_cdc_all_dup_re"     = "#FF00AA",
+  "ensemble3train_cdc_all_dup_re" = "#FF00FF",
+  "ensemble1_cdc_inconly"         = "#AA0066",
+  "ensemble3_cdc_inconly"         = "#CC0066",
+  "ensemble23_cdc_inconly"        = "#FF0066",
+  "ensemble3train_cdc_inconly"    = "#FF44FF",
+  "ensemble3_cdc_inconly_testdate"         = "#FF4400",
+  "cdf_raw_ens_v0_selhub8"        = "#440000",
+  "cdf_rwt2_ens_v0_selhub8"       = "#770000",
+  "cdf_rwt2_ens_v0_selhub8_v1pre" = "#990000",
+  "cdf_rwt2_ens_v0_selhub8_v1"    = "#CC0000",
+  "cdf_rwt2imp_ens_v0_selhub8"    = "#FF0000",
+  "YYG-ParamSearch"               = "#000055",
+  "Covid19Sim-Simulator"          = "#0000AA"
+)
+forecaster.labels = c(
+  "COVIDhub-baseline"             = "CHbase",
+  "COVIDhub-ensemble"             = "CHens",
+  "hayman_ens_v1_selhub8"         = "hay_v1",
+  "qspace_ew_md_ens_v1_inconly"   = "QEWMD_allinc",
+  "qspace_ew_md_ens_v1_all"       = "QEWMD_allwide",
+  "qspace_ew_md_ens_v1_selhub8"   = "QEWMD",
+  "qspace_ew_mean_ens_v1_inconly" = "QEWAM_allinc",
+  "qspace_ew_mean_ens_v1_all"     = "QEWAM_allwide",
+  "qspace_ew_mean_ens_v1_selhub8" = "QEWAM",
+  "ensemble1_cdc_dup"             = "QG1",
+  "ensemble3_cdc_dup"             = "QG3",
+  "ensemble23_cdc_dup"            = "QG23",
+  "ensemble1_cdc_impute"          = "QG1_imp",
+  "ensemble3_cdc_impute"          = "QG3_imp",
+  "ensemble23_cdc_impute"         = "QG23_imp",
+  "ensemble3train_cdc_impute"     = "QG3only_imp",
+  "ensemble3_comb4_impute"        = "QG3_comb4_imp",
+  "ensemble1_cdc_all_dup"         = "QG1_allwide_imp",
+  "ensemble3_cdc_all_dup"         = "QG3_allwide_imp",
+  "ensemble23_cdc_all_dup"        = "QG23_allwide_imp",
+  "ensemble3train_cdc_all_dup"    = "QG3only_allwide_imp",
+  "ensemble1_cdc_all_dup_re"      = "QG1_allwide_imp",
+  "ensemble3_cdc_all_dup_re"      = "QG3_allwide_imp",
+  "ensemble23_cdc_all_dup_re"     = "QG23_allwide_imp",
+  "ensemble3train_cdc_all_dup_re" = "QG3only_allwide_imp",
+  "ensemble1_cdc_inconly"         = "QG1_allinc_imp",
+  "ensemble3_cdc_inconly"         = "QG3_allinc_imp",
+  "ensemble23_cdc_inconly"        = "QG23_allinc_imp",
+  "ensemble3train_cdc_inconly"    = "QG3only_allinc_imp",
+  "ensemble3_cdc_inconly_testdate"         = "QG3_allinc_imp_testdate",
+  "cdf_raw_ens_v0_selhub8"        = "CDF_v0.0",
+  "cdf_rwt2_ens_v0_selhub8"       = "CDF_v0.2",
+  "cdf_rwt2_ens_v0_selhub8_v1pre" = "CDF_v1.2.0",
+  "cdf_rwt2_ens_v0_selhub8_v1"    = "CDF_v1.2.1",
+  "cdf_rwt2imp_ens_v0_selhub8"    = "CDF_v1.2.1_imp"
+)
+
+
+corrections =
+    readr::read_csv("../../forecaster_code/pipeline_code/common_funs/data/corrections_state.csv")
+
+median_k = 12L
+
+validation_window_length = 4L # see below if this is actually used and how
+
+all_scorecards =
+    dplyr::bind_rows(scorecard_meta, ensemble_scorecard_meta) %>%
+    tidyr::pivot_wider(id_cols=c(ahead,response,geo_type,incidence_period,n_locations), names_from="forecaster", values_from="filename") %>%
+    na.omit() %>%
+    tidyr::pivot_longer(-c(ahead,response,geo_type,incidence_period,n_locations), names_to="forecaster", values_to="filename") %>%
+    dplyr::mutate(scorecard=lapply(filename, readRDS)) %>%
+    tidyr::unnest(scorecard) %>%
+    dplyr::mutate(target_sunday = target_start - as.POSIXlt(target_start)$wday) %>%
+    dplyr::left_join(corrections %>%
+                     dplyr::mutate(is_corrected=TRUE) %>%
+                     dplyr::mutate(location=as.character(location)) %>%
+                     dplyr::mutate(value = as.numeric(value)) %>%
+                     dplyr::mutate(target_sunday = reference_date - as.POSIXlt(reference_date)$wday),
+                     by=c("location", "location_name", "target_sunday", "response"="variable_name")) %>%
+    mutate(actual = dplyr::if_else(!is.na(is_corrected), value, actual),
+           err = {
+               if (any(!is.na(is_corrected) & is_corrected & !is.na(value))) stop ('cannot handle corrections to non-NA values')
+               else dplyr::if_else(!is.na(is_corrected) & is_corrected, NA_real_, err)
+           }) %>%
+    dplyr::select(-reference_date, -issue_date, -value) %>%
+    dplyr::filter(!is.na(actual)) %>%
+    dplyr::group_by(ahead, response, geo_type, incidence_period, n_locations, forecaster, filename) %>%
+    tidyr::nest() %>%
+    dplyr::rename(scorecard=data) %>%
+    ##
+    dplyr::mutate(scorecard = lapply(scorecard, . %>% mutate(forecast_date=as.Date(forecast_date),
+                                                             target_start=as.Date(target_start),
+                                                             target_end=as.Date(target_end)
+                                                             ))) %>%
+    tidyr::unnest(scorecard) %>%
+    dplyr::mutate(point_est = vapply(forecast_distribution, function(df) df[["quantiles"]][[median_k]], numeric(1L))) %>%
+    dplyr::filter(!is.na(actual) & !is.na(err)) %>%
+    dplyr::mutate(ahead=as.integer(ahead)) %>%
+    ## dplyr::filter(forecast_date >= max(forecast_date) - 7L*validation_window_length) %>%
+    ## dplyr::filter(forecast_date <= max(forecast_date) - 7L*(validation_window_length+1L+ahead)) %>%
+    dplyr::group_by(ahead,response,geo_type,incidence_period,n_locations,location,location_name,forecast_date) %>%
+    dplyr::filter(., dplyr::n() == length(unique(.[["forecaster"]]))) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(err_abs = get_median_error(actual, forecast_distribution)) %>% 
+    dplyr::mutate(err_abs_log = get_median_log_error(actual, forecast_distribution)) %>%
+    dplyr::filter(!is.na(err_abs) & !is.na(err_abs_log)) %>%
+    dplyr::mutate(fc = factor(forecaster, forecaster_names)) %>%
+    identity()
+
+scorecards =
+  all_scorecards %>%
+  {
+    if (identical(eval_locations, "ALL")) {
+      .
+    } else {
+      dplyr::filter(., location %in% eval_locations)
+    }
+  } %>%
+  dplyr::group_by(forecast_date, forecaster, location) %>%
+  dplyr::filter(dplyr::n() >= min_available_aheads_per_timeloc) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(ahead == eval_ahead)
+  
+sc = scorecards %>%
+  dplyr::group_by(forecaster, forecast_date) %>%
+  dplyr::group_split()
+  
+sc_df = scorecards
+
+## has_na <- sc %>% map_lgl(~ any(is.na(.x$err))) %>% which()
+## scorecard_meta <- scorecard_meta[-has_na, ]
+## forecasters <- scorecard_meta %>% 
+##   count(forecaster, sort = TRUE) %>% 
+##   filter(n >= 11) %>% 
+##   pull(forecaster)
+## forecast_dates <- scorecard_meta %>% 
+##   filter(forecaster %in% forecasters) %>% 
+##   count(forecast_date) %>% 
+##   filter(n >= 4) %>% 
+##   pull(forecast_date)
+## scorecard_meta <- scorecard_meta %>% 
+##   filter(forecaster %in% forecasters, forecast_date %in% forecast_dates)
+## sc <- scorecard_meta$filename %>% 
+##   map(readRDS)
+## names(sc) <- scorecard_meta$forecaster
+## sc_df <- bind_rows(sc, .id = "forecaster")
+## sc_df <- sc_df %>% 
+##   mutate(forecaster = as.factor(forecaster))
+```
+
+In this example, we have forecasts from `r length(unique(sc_df$forecaster))` forecasters across `r length(unique(sc_df$location))` locations and `r length(unique(sc_df$forecast_date))` forecast dates.
+
+
+## Comparing weighted interval score
+
+
+```{r}
+sc_df %>% 
+  ggplot(aes(x = forecaster, y = log(err))) +
+  geom_boxplot() + 
+  facet_wrap(~ forecast_date) + 
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_x_discrete(labels=forecaster.labels) +
+  labs(y = "log(WIS)")
+ggsave(paste0(plot_prefix,"wis_boxplot.pdf"),width=7,height=5,units="in")
+```
+
+We see that most of the variability is not across methods but rather across locations and forecast dates.  It's actually hard to tell if any method is better than any other from this plot.  This motivates the following approach to comparing forecasters.
+
+Consider the following model for $E_{\ell t f} = \log(\text{WIS}_{\ell tf})$, the log of the weighted interval score for forecaster $f$ at location $\ell$ on forecast date $t$:
+
+$$
+E_{\ell tf} = \mu + \alpha_f + a_\ell + b_t + \epsilon_{\ell tf},
+$$
+where $a_1,\ldots, a_L$ are iid $N(0,\sigma_L^2)$ location-specific random effects, $b_1,\ldots, b_T$ are iid $N(0,\sigma_T^2)$ time-specific random effects, and $\{\epsilon_{\ell tf}\}$ are iid $N(0,\sigma^2)$ (all of these mutually independent).
+
+We can fit such a model using `lme4`.
+```{r}
+fit <- lmer(log(err) ~ fc + (1|location) + (1|forecast_date),
+             data = sc_df)
+summary(fit)
+```
+
+Here we have taken `r levels(sc_df$fc)[1]` to be the baseline, so negative forecaster fixed effects indicate that a forecaster is doing better, in terms of WIS, than `r levels(sc_df$fc)[1]`.  Exponentiating these fixed effects give the multiplicative factor.  For example,
+
+$$
+\text{WIS}_\text{YYG} \approx e^{-0.15}\cdot \text{WIS}_\text{COVIDhub-baseline} \approx 0.86\cdot \text{WIS}_\text{COVIDhub-baseline}
+$$
+
+95% confidence intervals for forecaster fixed effects:
+```{r}
+confint(fit) %>%
+  as_tibble(rownames = "var") %>%
+  filter(str_starts(var, "fc")) %>%
+  mutate(fc = factor(sub("^fc","",var), forecaster_names)) %>%
+  ggplot(aes(x=fc, ymin=`2.5 %`, ymax=`97.5 %`, color = fc)) +
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_x_discrete(labels=forecaster.labels) +
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  geom_errorbar(width=0.2)
+ggsave(paste0(plot_prefix,"wis_ci.pdf"),width=7,height=5,units="in")
+```
+
+We can also look at the location-specific random effects (BLUPs) to get a sense of the locations where the forecasters overall did well/poorly:
+
+```{r}
+ranef(fit, drop=TRUE)$location %>% 
+  enframe(name = "location") %>% 
+  left_join(sc_df %>% distinct(location, location_name), by = "location") %>% 
+  mutate(location_name = factor(location_name, levels = location_name[order(value)])) %>% 
+  ggplot(aes(x = value, y = location_name)) + 
+  geom_point() +
+  theme(axis.text.y = element_text(size = rel(0.5))) +
+  labs(title = "Location-specific random effects")
+ggsave(paste0(plot_prefix,"wis_loc_ranef.pdf"),width=7,height=5,units="in")
+```
+
+Finally, we can look at the time-specific random effects (BLUPs) to get a sense of how the forecasters' performance has varied over time:
+```{r}
+ranef(fit, drop=TRUE)$forecast_date %>% 
+  enframe(name = "forecast_date") %>% 
+  ggplot(aes(y = forecast_date, x = value)) + 
+  geom_point() +
+  labs(title = "Time-specific random effects")
+ggsave(paste0(plot_prefix,"wis_time_ranef.pdf"),width=7,height=5,units="in")
+```
+
+With the possible exception of 7/6, they appear to have been improving over time.  We also notice that there is far more variability in forecaster performance across locations than across time.
+
+## Repeating analysis for MAE
+
+"Log AE" figure:
+```{r}
+sc_df %>% 
+  ggplot(aes(x = forecaster, y = err_abs_log)) +
+  geom_boxplot() + 
+  facet_wrap(~ forecast_date) + 
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_x_discrete(labels=forecaster.labels) +
+  labs(y = "log(AE)")
+ggsave(paste0(plot_prefix,"ae_boxplot.pdf"),width=7,height=5,units="in")
+```
+
+lmer model for "log AE":
+```{r}
+fit <- lmer(err_abs_log ~ fc + (1|location) + (1|forecast_date),
+             data = sc_df)
+summary(fit)
+```
+
+95% confidence intervals for forecaster fixed effects:
+```{r}
+confint(fit) %>%
+  as_tibble(rownames = "var") %>%
+  filter(str_starts(var, "fc")) %>%
+  mutate(fc = factor(sub("^fc","",var), forecaster_names)) %>%
+  ggplot(aes(x=fc, ymin=`2.5 %`, ymax=`97.5 %`, color = fc)) +
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_x_discrete(labels=forecaster.labels) +
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  geom_errorbar(width=0.2)
+ggsave(paste0(plot_prefix,"ae_ci.pdf"),width=7,height=5,units="in")
+```
+
+Location random effects for "log AE":
+```{r}
+ranef(fit, drop=TRUE)$location %>% 
+  enframe(name = "location") %>% 
+  left_join(sc_df %>% distinct(location, location_name), by = "location") %>% 
+  mutate(location_name = factor(location_name, levels = location_name[order(value)])) %>% 
+  ggplot(aes(x = value, y = location_name)) + 
+  geom_point() +
+  theme(axis.text.y = element_text(size = rel(0.5))) +
+  labs(title = "Location-specific random effects")
+ggsave(paste0(plot_prefix,"ae_loc_ranef.pdf"),width=7,height=5,units="in")
+```
+
+Time random effects for "log AE":
+```{r}
+ranef(fit, drop=TRUE)$forecast_date %>% 
+  enframe(name = "forecast_date") %>% 
+  ggplot(aes(y = forecast_date, x = value)) + 
+  geom_point() +
+  labs(title = "Time-specific random effects")
+ggsave(paste0(plot_prefix,"ae_time_ranef.pdf"),width=7,height=5,units="in")
+```
+
+## Comparing interval coverage
+
+We want to know whether a (central) 60% prediction interval has the nominal coverage.  We start again with a plot.
+
+```{r}
+sc_df2 <- sc_df %>% 
+  unnest(forecast_distribution)
+
+alpha <- 0.2
+sc_df2 <- sc_df2 %>%
+  filter(probs %in% c(alpha, 1 - alpha)) %>% 
+  pivot_wider(id_cols = c("fc",
+                          "forecaster", 
+                          "location",
+                          "location_name",
+                          "forecast_date",
+                          "actual"),
+              names_from = probs,
+              values_from = quantiles) 
+sc_df2 <- sc_df2 %>%
+  mutate(covers = 
+           actual >= !!rlang::sym(as.character(alpha)) &
+           actual <= !!rlang::sym(as.character(1 - alpha)))
+sc_df2 %>% 
+  group_by(forecast_date, fc, forecaster) %>% 
+  summarize(prop_covers = mean(covers)) %>% 
+  ggplot(aes(x = forecast_date, y = prop_covers, color = fc)) +
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_line() + 
+  geom_hline(yintercept = 1 - 2 * alpha, lty = 2)
+ggsave(paste0(plot_prefix,"cov2080_time.pdf"),width=7,height=5,units="in")
+```
+
+The simplest thing to do would be to compute the coverage averaged over all locations and forecast dates:
+
+```{r}
+sc_df2 %>% 
+  group_by(fc, forecaster) %>% 
+  summarize(prop = mean(covers))
+```
+
+This is equivalent to fitting a logistic regression model with a fixed effect for each forecaster
+
+$$
+\text{logit}~\mathbb P(Y_{\ell t}\in I_{\ell t f}) = \alpha_f
+$$
+and then looking at $1/(1+e^{-\alpha_f})$:
+```{r}
+fit <- glm(covers ~ fc - 1, family = binomial(), data = sc_df2)
+plogis(fit$coefficients)
+summary(fit)
+```
+
+The coefficients in the above model are not so useful for seeing whether the interval has the nominal coverage.  We can get a more interpretable parameterization by using an offset of $\text{logit}(0.6)$:
+$$
+\text{logit}~\mathbb P(Y_{\ell t}\in I_{\ell t f}) = \text{logit}(0.6) + \alpha_f.
+$$
+
+We'd then like to test $H_0: \alpha_f = 0$ or at least $H_0: \alpha_f \ge 0$.
+
+```{r}
+logit_nominal <- rep(qlogis(1 - 2*alpha), nrow(sc_df2))
+fit <- glm(covers ~ fc - 1, family = binomial(), offset = logit_nominal, 
+           data = sc_df2)
+summary(fit)
+```
+Negative values of $\hat{\alpha}_f$ correspond to undercovering whereas positive values correspond to overcovering.
+
+However, we should not trust these p-values because of the dependence induced across location and time.  We therefore consider a generalized linear mixed model:
+
+$$
+\text{logit}~\mathbb P(Y_{\ell t}\in I_{\ell t f}|a_\ell,b_t) = \text{logit}(0.6) + \alpha_f + a_\ell+b_t.
+$$
+
+```{r}
+fit <- glmer(covers ~ -1 + fc + (1|location) + (1|forecast_date),
+             family = binomial(), offset = logit_nominal, data = sc_df2)
+summary(fit)
+summary(fit)[["coefficients"]] %>%
+  as_tibble(rownames = "var") %>%
+  filter(str_starts(var, "fc")) %>%
+  mutate(fc = factor(sub("^fc","",var), forecaster_names)) %>%
+  mutate(
+    SEBarLow  = Estimate - `Std. Error`,
+    SEBarHigh = Estimate + `Std. Error`,
+    P = paste0("P=",signif(`Pr(>|z|)`, 2L))
+  ) %>%
+  ggplot(aes(x=fc, y=Estimate, ymin=SEBarLow, ymax=SEBarHigh, label=P, color = fc)) +
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_x_discrete(labels=forecaster.labels) +
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  geom_text(aes(y=SEBarHigh), hjust=0.5, vjust=-0.1) +
+  geom_pointrange()
+ggsave(paste0(plot_prefix,"cov2080_ci.pdf"),width=7,height=5,units="in")
+```
+
+Observe that we have strong evidence against YYG's 60% interval having the proper coverage whereas we have no evidence against the others.
+
+## Repeating analysis for 80% intervals
+
+
+```{r}
+sc_df2 <- sc_df %>% 
+  unnest(forecast_distribution)
+
+alpha <- 0.1
+sc_df2 <- sc_df2 %>%
+  filter(round(probs,3L) %in% c(alpha, 1 - alpha)) %>% 
+  pivot_wider(id_cols = c("fc",
+                          "forecaster", 
+                          "location",
+                          "location_name",
+                          "forecast_date",
+                          "actual"),
+              names_from = probs,
+              values_from = quantiles) 
+sc_df2 <- sc_df2 %>%
+  mutate(covers = 
+           actual >= !!rlang::sym(as.character(alpha)) &
+           actual <= !!rlang::sym(as.character(1 - alpha)))
+sc_df2 %>% 
+  group_by(forecast_date, fc, forecaster) %>% 
+  summarize(prop_covers = mean(covers)) %>% 
+  ggplot(aes(x = forecast_date, y = prop_covers, color = fc)) +
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_line() + 
+  geom_hline(yintercept = 1 - 2 * alpha, lty = 2)
+ggsave(paste0(plot_prefix,"cov1090_time.pdf"),width=7,height=5,units="in")
+```
+
+The simplest thing to do would be to compute the coverage averaged over all locations and forecast dates:
+
+```{r}
+sc_df2 %>% 
+  group_by(fc, forecaster) %>% 
+  summarize(prop = mean(covers))
+```
+
+Equivalent logistic model:
+```{r}
+fit <- glm(covers ~ fc - 1, family = binomial(), data = sc_df2)
+plogis(fit$coefficients)
+summary(fit)
+```
+
+Simple untrusted HT:
+```{r}
+logit_nominal <- rep(qlogis(1 - 2*alpha), nrow(sc_df2))
+fit <- glm(covers ~ fc - 1, family = binomial(), offset = logit_nominal, 
+           data = sc_df2)
+summary(fit)
+```
+Negative values of $\hat{\alpha}_f$ correspond to undercovering whereas positive values correspond to overcovering.
+
+GLMM:
+```{r}
+fit <- glmer(covers ~ -1 + fc + (1|location) + (1|forecast_date),
+             family = binomial(), offset = logit_nominal, data = sc_df2)
+summary(fit)
+## confint stalls or is slow; just using info already in summary:
+summary(fit)[["coefficients"]] %>%
+  as_tibble(rownames = "var") %>%
+  filter(str_starts(var, "fc")) %>%
+  mutate(fc = factor(sub("^fc","",var), forecaster_names)) %>%
+  mutate(
+    SEBarLow  = Estimate - `Std. Error`,
+    SEBarHigh = Estimate + `Std. Error`,
+    P = paste0("P=",signif(`Pr(>|z|)`, 2L))
+  ) %>%
+  ggplot(aes(x=fc, y=Estimate, ymin=SEBarLow, ymax=SEBarHigh, label=P, color = fc)) +
+  theme(axis.text.x = element_text(angle = -30, hjust = 0)) +
+  scale_x_discrete(labels=forecaster.labels) +
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_hline(yintercept=0, linetype="dashed") +
+  geom_text(aes(y=SEBarHigh), hjust=0.5, vjust=-0.1) +
+  geom_pointrange()
+ggsave(paste0(plot_prefix,"cov1090_ci.pdf"),width=7,height=5,units="in")
+```
+
+
+## Comparing calibration
+
+To assess calibration, we can look at the following plots, which for each quantile level $\tau$ shows the fraction of location/time pairs for which the actual value is below the forecaster's quantile:
+
+$$
+\frac1{L\cdot T}\sum_{\ell t}1\{Y_{\ell t}\le q_{\ell t f}(\tau)\}.
+$$
+Ideally, this will fall on the $45^\circ$ line.  Writing $F_{\ell t f}(y):=q_{\ell t f}^{-1}(y)$ for the forecaster's cdf, we can write this as
+$$
+\frac1{L\cdot T}\sum_{\ell t}1\{F_{\ell t f}(Y_{\ell t})\le \tau\},
+$$
+which is the empirical cdf of the PIT-ed data.
+
+```{r}
+sc_df3 <- sc_df %>% 
+  unnest(forecast_distribution) %>% 
+  mutate(is_below = actual <= quantiles)
+sc_df3 %>% 
+  group_by(fc, forecaster, forecast_date, probs) %>% 
+  summarize(prop_below = mean(is_below)) %>% 
+  ggplot(aes(x = probs, y = prop_below, color = fc)) + 
+  scale_colour_manual(values=forecaster.colors, labels=forecaster.labels) +
+  geom_line() + 
+  facet_wrap(~ forecast_date) + 
+  geom_abline(slope = 1, intercept = 0) + 
+  theme(legend.position = "bottom") +
+  labs(x = "nominal quantile level",
+       y = "proportion that actual <= quantile")
+ggsave(paste0(plot_prefix,"cov.pdf"),width=7,height=5,units="in")
+```
+
+If one cares only about a single quantile level $\tau$, then one can fit a binomial GLMM as in the previous section.  However, if one cares about all quantiles, as one does when assessing the calibration of a forecaster, then one can proceed as follows.
+
+Suppose each forecaster gives $K$ quantiles per location/time: $q_{\ell t f}(\tau_k)$ for $k=1,\ldots,K$.  For notational convenience, we will add $\tau_0:=0$ and $\tau_{K+1}:=1$, with $q_{\ell t f}(\tau_0) = -\infty$ and $q_{\ell t f}(\tau_{K+1}) = \infty$.
+
+Define the ordinal response variable (with $K+1$ levels) as
+$$
+Z_{\ell t f} = k \iff q_{\ell t f}(\tau_{k})\le Y_{\ell t}< q_{\ell t f}(\tau_{k+1}) \quad\text{ for }~k=0,\ldots, K.
+$$
+That is, $K$ quantiles divide the space into $K+1$ regions, and $Z_{\ell t f}$ records which of these regions the response falls into.
+
+The multinomial GLM
+$$
+Z_{\ell t f} \sim \text{Multinomial}_{K+1}(1, \pi_{\ell t f})
+$$
+with 
+$$
+\log(\pi_{\ell t f k}/\pi_{\ell t f 0})=\alpha_{fk}\quad\text{ for }k=1,\ldots,K
+$$
+has MLE satisfying
+$$
+\hat\pi_{\ell t f k} = \frac1{L\cdot T}\sum_{\ell t}1\{Z_{\ell t f} = k\}.
+$$
+
+This is directly related to what is examined by PIT-related diagnostics.  For example, when one makes a histogram of PIT values, the $k$th bar of the histogram has width $\tau_{k+1}-\tau_k$ and height $\hat\pi_{\ell t f k} / (\tau_{k+1}-\tau_k)$.
+
+Using an offset gives a more interpretable parameterization:
+
+$$
+\log(\pi_{\ell t f k}/\pi_{\ell t f 0})=\log[(\tau_{k+1} - \tau_{k})/(\tau_1-\tau_0)] + \alpha_{fk}\quad\text{ for }k=1,\ldots,K
+$$
+
+The hypothesis $H_0:\alpha_{f\cdot}=0_{K}$ corresponds to forecaster $f$ being calibrated.
+
+For the identical reasons as discuseed in the previous sections, we should account for the dependence due to common location and dates.
+
+$$
+\log[\mathbb P(Z_{\ell t f k}|a_\ell, b_t) / \mathbb P(Z_{\ell t f 0}|a_\ell, b_t)]=\log[(\tau_{k+1} - \tau_{k})/(\tau_1-\tau_0)] + \alpha_{fk}+a_\ell+b_t\quad\text{ for }k=1,\ldots,K
+$$
+
+
+
+```{r}
+calib <- sc_df3 %>% 
+  group_by(fc, forecaster, location, forecast_date) %>% 
+  summarize(bin = which(actual <= quantiles)[1],
+            actual = actual[1]) %>% 
+  ungroup() %>% 
+  mutate(bin = replace_na(bin, 24))
+```
+
+[Here](https://cran.r-project.org/web/packages/ordinal/vignettes/clmm2_tutorial.pdf)'s a useful link to the `ordinal` package.
+```{r}
+fit <- clmm2(as.factor(bin) ~ fc, 
+             random = as.factor(forecast_date), data = calib)
+fit
+```

@@ -1,0 +1,950 @@
+---
+title: "Probabilistic Forecast Evaluation Report"
+header-includes:
+   - \usepackage{float}
+   - \usepackage{color}
+output: pdf_document
+params:
+    path_to_github: "path_to_the_covid-19_github"
+    path_to_data: "path_to_the_upstream_df"
+    scorecard_files: "path_to_scorecards_separated_by_semicolons"
+    forecaster_names: "names_separated_by_semicolons"
+    locations_considered: "ALL_or_codes_separated_by_semicolons"
+always_allow_html: true
+---
+```{r setup, include = FALSE, echo = FALSE}
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(ggthemes)
+library(latex2exp)
+library(kableExtra)
+
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, fig.width = 8)
+
+getOutputFormat <- function() {
+  output <- rmarkdown:::parse_yaml_front_matter(
+    readLines(knitr::current_input())
+    )$output
+  if (is.list(output)){
+    return(names(output)[1])
+  } else {
+    return(output[1])
+  }
+}
+output_format = getOutputFormat()
+```
+
+[comment]: # #################################################################
+[comment]: # #             BEGINNING OF DATA LOADING CODE BLOCKS             #
+[comment]: # #################################################################
+
+```{r global-settings}
+# TODO: USER UPDATES THESE:
+path_to_github <- params$path_to_github
+forecast_repo <- params$forecast_repo
+path_to_data <- params$path_to_data
+```
+
+```{r wrap-hook, include = FALSE}
+hook_output = knit_hooks$get('output')
+knit_hooks$set(output = function(x, options) {
+  # this hook is used only when the linewidth option is not NULL
+  if (!is.null(n <- options$linewidth)) {
+    x = knitr:::split_lines(x)
+    # any lines wider than n should be wrapped
+    if (any(nchar(x) > n)) x = strwrap(x, width = n)
+    x = paste(x, collapse = '\n')
+  }
+  hook_output(x, options)
+})
+```
+
+This file takes in multiple score cards and an upstream data frame, and shows
+the standard evaluation metrics and plots we like.
+```{r load data, echo = FALSE, include = FALSE}
+scorecard_files <- str_split(params$scorecard_files, ";")[[1]]
+forecaster_names <- str_split(params$forecaster_names, ";")[[1]]
+score_cards_list <- scorecard_files %>% map(readRDS)
+names(score_cards_list) <- forecaster_names
+load(path_to_data) # gives df
+override <- TRUE
+```
+
+[comment]: # #################################################################
+[comment]: # #                END OF DATA LOADING CODE BLOCKS                #
+[comment]: # #         MODIFICATION OF SUBSEQUENT CODE BREAKS WARRANTY       #
+[comment]: # #################################################################
+
+```{r helper-mapping, echo=FALSE}
+STATE_TO_FIPS = list("WA"="53", "DE"="10", "DC"="11", "WI"="55", "WV"="54",
+"HI"="15", "FL"="12", "WY"="56", "PR"="72", "NJ"="34", "NM"="35", "TX"="48",
+"LA"="22", "NC"="37", "ND"="38", "NE"="31", "TN"="47", "NY"="36", "PA"="42",
+"AK"="02", "NV"="32", "NH"="33", "VA"="51", "CO"="08", "CA"="06", "AL"="01",
+"AR"="05", "VT"="50", "IL"="17", "GA"="13", "IN"="18", "IA"="19", "MA"="25",
+"AZ"="04", "ID"="16", "CT"="09", "ME"="23", "MD"="24", "OK"="40", "OH"="39",
+"UT"="49", "MO"="29", "MN"="27", "MI"="26", "RI"="44", "KS"="20", "MT"="30",
+"MS"="28", "SC"="45", "KY"="21", "OR"="41", "SD"="46")
+```
+
+```{r select locations, echo = FALSE}
+locations_list = lapply(score_cards_list,function(u){unique(u$location)})
+sc_locations = Reduce(intersect, locations_list)
+candidate_common_locations = intersect(sc_locations, df$location)
+common_locations =
+  if (params[["locations_considered"]] == "ALL") {
+    candidate_common_locations
+  } else {
+    intersect(candidate_common_locations, strsplit(params[["locations_considered"]],";")[[1L]])
+  }
+num_locations = length(common_locations)
+if (num_locations == 0)
+  stop("There are no common locations under consideration at which all forecasters are predicting.")
+
+# Make sure that the df and scorecard only contain locations for which all forecasters
+# knew they were predicting.
+df <- df %>% filter(location %in% common_locations)
+for(score_card in score_cards_list){
+  score_card <- score_card %>% filter(location %in% common_locations)
+}
+```
+
+```{r check data, echo = FALSE, linewidth = 60}
+attributes_list <- lapply(score_cards_list, function(u){attr(u, "metadata")})
+if(any(sapply(attributes_list, is.null))){
+  cat(sprintf("Warning: Scorecards %s do not have metadata for attributes.  Please confirm the scorecards are for the same task.",
+              paste(names(score_cards_list)[sapply(attributes_list, is.null)], collapse = ", ")), fill = TRUE)
+}
+
+response_list <- unlist(lapply(attributes_list, function(u){u$response}))
+ahead_list <- unlist(lapply(attributes_list, function(u){u$ahead}))
+incidence_period_list <- unlist(lapply(attributes_list, function(u){u$incidence_period}))
+geo_type_list <- unlist(lapply(attributes_list, function(u){u$geo_type}))
+err_measure_list <- unlist(lapply(attributes_list, function(u){u$err_measure}))
+backfill_buffer_list <- unlist(lapply(attributes_list, function(u){u$backfill_buffer}))
+n_locations_list <- unlist(lapply(attributes_list, function(u){u$n_locations}))
+
+metadata_list <- list(response = response_list, 
+                      ahead = ahead_list, 
+                      incidence_period = incidence_period_list, 
+                      geo_type = geo_type_list, 
+                      err_measure = err_measure_list, 
+                      backfill_buffer = backfill_buffer_list,
+                      n_locations = n_locations_list)
+
+
+if(length(response_list) > 0){
+  check <- sapply(metadata_list, function(u){length(unique(u[!is.na(u) & !is.null(u)])) == 1})
+  
+  if(any(!check)) {
+    if(!override) stop(sprintf("The input scorecards do not agree on the following metadata parameters: %s.  Please check the metadata using `attr(score_card, 'metadata')`.  You can override this check by setting override = TRUE in the header.",
+                               paste(names(check)[!check], collapse = ", ")))
+    else cat("Metadata check overridden", fill = TRUE)
+  } 
+  
+  response <- response_list[1]
+  cat(sprintf(" response : %s \n ahead : %s \n incidence_period : %s \n geo_type : %s \n err_measure : %s \n backfill_buffer : %s",response_list[1], ahead_list[1], incidence_period_list[1], geo_type_list[1], err_measure_list[1], backfill_buffer_list[1]), fill = TRUE)
+} else{
+  cat(sprintf("No metadata.  Using %s as response", response), fill = TRUE)
+  response <- "usafacts_deaths_incidence_num"
+}
+if (!(response %in% df$variable_name)) {
+  old_name <- "usafacts_deaths_incidence_num"
+  new_name <- "usa-facts_deaths_incidence_num"
+  if (response ==  old_name & new_name %in% df$variable_name) {
+    df <- df %>%
+      mutate(variable_name = if_else(variable_name == new_name,
+                                     old_name, variable_name))
+  }
+  else {
+    stop(sprintf("response from score cards is %s, which is not found in df.",
+                 response),
+         " Here are the variables in df: ",
+         paste(unique(df$variable_name), collapse = ", "))
+  }
+}
+```
+
+```{r set-geo-type, echo=FALSE}
+geo_type = geo_type_list[1]
+if (geo_type == 'county') {
+  geo_type_plural = 'counties'
+  n_display_regions = 50
+} else if (geo_type == 'state') {
+  geo_type_plural = 'states'
+  n_display_regions = 30
+} else {
+  stop(sprintf("Unrecognized geo_type: %s", geo_type))
+}
+```
+
+
+```{r load evaluator-files, echo=FALSE, include = FALSE}
+source(file.path(path_to_github,
+                 "hospitalization",
+                 "pipeline",
+                 "evaluation_pipeline",
+                 "prob_forecast_evaluation_coverage.R"))
+# for population size:
+geo_info <- read_csv(file.path(path_to_github,
+                             "demographics",
+                             "data",
+                             paste0(geo_type, "-health-rankings.csv")))
+# TODO: UPDATE THIS
+## The `location` column should be FIPS or two-letter postal (lowercase)
+## The `location_name` column should either be upper postal or full state name
+if (geo_type == 'county') {
+  geo_info <- geo_info %>% transmute(
+      location = fips,
+      location_name = county,
+      population = chr_population,
+    )
+} else if (geo_type == 'state') {
+    # TODO: Conform column names to flexible to both state and county.
+  geo_info <- geo_info %>% transmute(
+      location = sapply(state,
+                        function(x) STATE_TO_FIPS[[str_to_upper(x)]]),
+      location_name = toupper(state),
+      population = chr_population,
+  )
+} else {
+  stop(sprintf("Unrecognized geo_type: %s", geo_type))
+}
+source(file.path(path_to_github,
+                 "hospitalization",
+                 "pipeline", 
+                 "evaluation_pipeline", 
+                 "diagnose.R"))
+```
+
+```{r setup kable, include = FALSE, echo = FALSE}
+
+dates <- lapply(score_cards_list, function(u){unique(pull(u, forecast_date))})
+
+common_dates <- as.Date(base::Reduce("intersect", dates), origin = "1970-01-01")
+num_dates <- length(common_dates)
+
+stopifnot((num_dates > 0) & (num_locations > 0))
+score_cards_list <- lapply(score_cards_list,
+                           function(u){filter(u, forecast_date %in% common_dates
+                                              &  location %in% common_locations
+                                              )})
+
+stopifnot(is.data.frame(df))
+
+if ("html_document" %in% rmarkdown::all_output_formats(knitr::current_input())){
+  kable_format <- "html"
+} else if("pdf_document" %in% rmarkdown::all_output_formats(knitr::current_input())){
+  kable_format <- "latex"
+} else{
+  warning("Trying to knit to something other than pdf or html; kableExtra may not support it; contact Samyak")
+  kable_format <- "html"
+}
+```
+
+```{r initial calculations-1, include = FALSE}
+## Gather the names of the scorecards
+names_list <- data.frame(straw = 1:length(score_cards_list), scorecard = names(score_cards_list)) %>% 
+  mutate(straw = as.numeric(as.character(straw)),
+         scorecard = as.character(scorecard))
+
+## Bind the score cards together
+score_card_bound <- 
+  bind_rows(score_cards_list, .id = "scorecard") %>% left_join(names_list, by = "scorecard") %>%
+  mutate(err_abs = get_median_error(actual, forecast_distribution)) %>% 
+  mutate(err_abs_log = get_median_log_error(actual, forecast_distribution))
+
+nlist <- length(score_cards_list)
+
+## This is for the tables
+leftover_rows <- setdiff(1:(num_dates * nlist), c(nlist * (0:(num_dates-1)) + 1, nlist * (0:(num_dates-1)) + 2))
+
+## This is for plots
+colour_values <- c("black", "red", c("dodgerblue1","seagreen1", "plum1", "hotpink1"))
+colour_values <- colour_values[1:nlist]
+
+## This is top error locations (for table as well as diagnostic plots)
+errs_by_location <- score_card_bound %>% 
+  group_by(location, location_name, scorecard) %>% 
+  summarize(mean_err_abs = mean(err_abs, na.rm = TRUE),
+            mean_err = mean(err, na.rm = TRUE)) %>%
+  ungroup()
+```
+
+```{r initial calculations-2, include = FALSE}
+
+
+## 
+if(nlist > 2) warning(sprintf("More than two scorecards.  Only showing differences between first two, %s - %s", names_list$scorecard[1], names_list$scorecard[2]))
+
+err_names <- paste("err_abs", names_list$scorecard[1:2], sep = "_")
+
+##
+score_card_diff <- score_card_bound %>% 
+  pivot_wider(id_cols = c(location, forecast_date, actual),
+              names_from = scorecard,
+              names_prefix = "err_abs_",
+              values_from = err_abs) %>%
+  mutate(err_abs_diff = !!rlang::sym(err_names[1]) - !!rlang::sym(err_names[2]))
+```
+
+```{r initial calculations-3, include = FALSE}
+
+##
+worst_errors_abs <- errs_by_location %>%
+  group_by(scorecard) %>%
+  top_n(n_display_regions, wt = mean_err_abs) %>% 
+  arrange(desc(mean_err_abs)) %>%
+  select(-mean_err)
+
+worst_errors_scores <- errs_by_location %>%
+  group_by(scorecard) %>%
+  top_n(n_display_regions, wt = mean_err) %>% 
+  arrange(desc(mean_err)) %>%
+  select(-mean_err_abs)
+
+
+worst_errors_regions <- worst_errors_abs %>%
+  ungroup() %>%
+  select(location) %>%
+  distinct() %>%
+  left_join(geo_info, by = "location") %>%
+  top_n(n_display_regions)
+
+biggest_regions <- geo_info %>%
+  top_n(n_display_regions, wt = population)
+
+diff_error_regions <- score_card_diff %>%
+  left_join(geo_info, by = "location") %>%
+  group_by(location, location_name) %>%
+  summarise(mean_err_abs_diff = mean(abs(err_abs_diff))) %>%
+  ungroup %>%
+  top_n(n_display_regions, wt = mean_err_abs_diff)
+
+
+predict_outbreak_regions <- score_card_bound %>%
+  left_join(geo_info, by = "location") %>%
+  group_by(scorecard, location, location_name.x) %>%
+  mutate(max_actual = max(actual)) %>%
+  filter(max_actual == 0 & err != 0) %>%
+  ungroup() %>%
+  group_by(scorecard) %>%
+  top_n(4, wt = err_abs) %>%
+  ungroup %>%
+  select(location, location_name.x) %>%
+  distinct() %>%
+  head(n_display_regions)
+
+
+
+locations_filter <- unique(c(worst_errors_regions$location,
+                      biggest_regions$location, 
+                      diff_error_regions$location, 
+                      predict_outbreak_regions$location))
+
+```
+
+```{r initial calculations-4, include = FALSE}
+
+##
+min_plot_reference_date <- ymd(20200414)
+
+diagnostic_plots <-
+  diagnose_quantile_forecasters(
+    df,
+    score_cards = score_cards_list,
+    locations = locations_filter,
+    response = response,
+    max_plots_per_page = 4,
+    min_plot_reference_date = min_plot_reference_date
+  )
+
+pop_deciles <- geo_info %>% 
+  pull(population) %>% 
+  quantile(probs = seq(0, 1, length=11))
+pop_deciles[1] <- pop_deciles[1] * 0.9
+pop_deciles[11] <- pop_deciles[11] * 1.1
+```
+
+
+# Intervals and coverage
+
+### Coverage proportion (across locations):
+
+In what fraction of locations is the actual value in $(\hat q_{\alpha/2},\hat q_{1-\alpha/2})$?  Does it match the nominal coverage of $1-\alpha$?
+
+- We would like the coverage line to be at or above the line $y = x$.
+
+```{r coverage line, echo=FALSE}
+coverage_list <- lapply(score_cards_list, compute_coverage)
+
+coverage_bound <- bind_rows(coverage_list, .id = "scorecard")
+
+coverage_bound %>%
+  pivot_longer(contains("prop"),
+               names_to = "coverage_type",
+               values_to = "proportion") %>% 
+  filter(coverage_type == "prop_covered") %>%
+  ggplot(aes(x = nominal_coverage_prob, 
+             y = proportion,
+             colour = scorecard
+             )) +
+  geom_line() + 
+  # geom_col() +
+  facet_wrap(~ forecast_date) +
+  geom_abline(intercept = 0, slope = 1) + 
+  labs(x = TeX("Nominal coverage, $(1 - \\alpha)$"),
+       y = "Proportion",
+       title = "Coverage") +
+  geom_vline(xintercept = 0.6, lty = 2) + 
+  xlim(0, 1) +
+  ylim(0, 1) + 
+  theme_bw() +
+  scale_colour_manual(name = "",
+                      values = colour_values,
+                      breaks = names_list$scorecard) +
+  NULL
+
+```
+
+\newpage
+
+In what fraction of locations is the true value (strictly) above or below the nominal quantiles?
+
+```{r wedge plot, echo = FALSE}
+coverage_quantiles_list <- lapply(score_cards_list, compute_quantile_coverage)
+
+wedgeplot_coverage <- function(coverage_quantiles, name){
+coverage_quantiles %>%
+  pivot_longer(contains("prop"),
+               names_to = "coverage_type",
+               values_to = "proportion") %>% 
+  filter(coverage_type != "prop_covered") %>%
+  mutate(alpha = ifelse((coverage_type == "prop_above" & nominal_quantile < 0.5) | 
+                          (coverage_type == "prop_below" & nominal_quantile > 0.5), 0.5, 1)) %>% 
+  ggplot(aes(x = nominal_quantile, 
+             y = proportion,
+             colour = coverage_type)) +
+  geom_line(aes(alpha = alpha, size = alpha)) + 
+  geom_point(aes(alpha = alpha, size = alpha)) +
+  # geom_col() +
+  facet_wrap(~ forecast_date) +
+  geom_abline(intercept = 0, slope = 1) + 
+  geom_abline(intercept = 1, slope = -1) + 
+  labs(x = TeX("Nominal quantile"),
+       y = "Proportion",
+       title = sprintf("Quantile plots - %s", name)) +
+  geom_vline(xintercept = c(0.2, 0.8), lty = 2) + 
+  xlim(0, 1) +
+  ylim(0, 1) + 
+  theme_bw() +
+  scale_colour_discrete(name = "") +
+  scale_alpha_continuous(range = c(0.5, 1)) +
+  scale_size_continuous(range = c(0.5, 1)) +
+  guides(alpha = FALSE, size = FALSE) +
+  NULL
+}
+
+for(i in 1:length(coverage_quantiles_list)){
+  print(wedgeplot_coverage(coverage_quantiles_list[[i]], names_list$scorecard[i]))
+}
+
+
+
+```
+
+
+\newpage
+
+```{r}
+first_forecast_date <- score_cards_list %>% 
+  map(~ min(.x$forecast_date)) %>%
+  unlist() %>% 
+  min() %>% 
+  as.Date(origin="1970-01-01")
+thresh <- 5
+above <- df %>% 
+  filter(variable_name == response) %>% 
+  filter(reference_date >= first_forecast_date - 7,
+         reference_date <= first_forecast_date) %>% 
+  select(-issue_date) %>%
+  group_by(location) %>%
+  summarize(tot = sum(value)) %>% 
+    filter(tot >= thresh) %>% 
+    pull(location)
+num_above <- length(above)
+```
+
+<!-- There are `r num_above` `r geo_type_plural` with at least `r thresh` deaths in -->
+<!-- the week leading up to `r first_forecast_date`.  Here are the same plots -->
+<!-- restricted to just those `r geo_type_plural`. -->
+
+<!-- ```{r coverage line conditional, echo=FALSE} -->
+<!-- conditional_coverage_list <- map(score_cards_list, -->
+<!--                                  function(u) { -->
+<!--                                    u <- u %>% filter(location %in% above) -->
+<!--                                    compute_coverage(u) -->
+<!--                                  }) -->
+
+<!-- conditional_coverage_bound <- bind_rows(conditional_coverage_list, .id = "scorecard") -->
+
+<!-- conditional_coverage_bound %>% -->
+<!--   pivot_longer(contains("prop"), -->
+<!--                names_to = "coverage_type", -->
+<!--                values_to = "proportion") %>%  -->
+<!--   filter(coverage_type == "prop_covered") %>% -->
+<!--   ggplot(aes(x = nominal_coverage_prob,  -->
+<!--              y = proportion, -->
+<!--              colour = scorecard -->
+<!--              )) + -->
+<!--   geom_line() +  -->
+<!--   # geom_col() + -->
+<!--   facet_wrap(~ forecast_date) + -->
+<!--   geom_abline(intercept = 0, slope = 1) +  -->
+<!--   labs(x = TeX("Nominal coverage, $(1 - \\alpha)$"), -->
+<!--        y = "Proportion", -->
+<!--        title = "Coverage") + -->
+<!--   geom_vline(xintercept = 0.6, lty = 2) +  -->
+<!--   xlim(0, 1) + -->
+<!--   ylim(0, 1) +  -->
+<!--   theme_bw() + -->
+<!--   scale_colour_manual(name = "", -->
+<!--                       values = colour_values, -->
+<!--                       breaks = names_list$scorecard) + -->
+<!--   NULL -->
+
+<!-- ``` -->
+
+<!-- \newpage -->
+
+<!-- ```{r wedge plot conditional, echo = FALSE} -->
+<!-- conditional_coverage_quantiles_list <- map(score_cards_list, -->
+<!--                                  function(u) { -->
+<!--                                    u <- u %>% filter(location %in% above) -->
+<!--                                    compute_quantile_coverage(u) -->
+<!--                                  }) -->
+
+<!-- for(i in 1:length(conditional_coverage_quantiles_list)){ -->
+<!--   print(wedgeplot_coverage(conditional_coverage_quantiles_list[[i]], names_list$scorecard[i])) -->
+<!-- } -->
+
+<!-- ``` -->
+
+<!-- \newpage -->
+
+<!-- We now look at coverage within each decile.  In the following plot, we have overlaid the coverage lines at each decile. -->
+
+<!-- ```{r decile-coverage, echo = FALSE, fig.height=10} -->
+<!-- deciles_coverage_plot <- function(score_card){ -->
+<!--   score_card %>% left_join( -->
+<!--     geo_info %>% mutate( -->
+<!--         population_group = as.factor(cut(population, -->
+<!--                                          breaks = pop_deciles, -->
+<!--                                          labels = FALSE)) -->
+<!--     ) %>% select( -->
+<!--       location, -->
+<!--       population_group, -->
+<!--     ), by = "location" -->
+<!--   ) %>% split( -->
+<!--     .$population_group -->
+<!--   ) %>% map_if( -->
+<!--     ~ nrow(.) > 0, compute_coverage -->
+<!--   ) %>% {.} -->
+<!-- } -->
+
+<!-- deciles_coverage_plot_lists <- lapply(score_cards_list, deciles_coverage_plot) %>% -->
+<!--   unlist(recursive = FALSE) %>% -->
+<!--   bind_rows(.id = "id") %>% -->
+<!--   separate(id, c("scorecard", "decile"), sep = "\\.") %>% -->
+<!--   mutate(decile = as.numeric(decile)) -->
+
+
+<!-- deciles_coverage_plot_lists %>% -->
+<!--   pivot_longer(contains("prop"), -->
+<!--                names_to = "coverage_type", -->
+<!--                values_to = "proportion") %>%  -->
+<!--   filter(coverage_type == "prop_covered") %>% -->
+<!--   ggplot(aes(x = nominal_coverage_prob,  -->
+<!--              y = proportion, -->
+<!--              colour = scorecard, -->
+<!--              group = decile -->
+<!--              )) + -->
+<!--   geom_line(aes(alpha = decile)) +  -->
+<!--   # geom_col() + -->
+<!--   facet_wrap(~ forecast_date + scorecard) + -->
+<!--   geom_abline(intercept = 0, slope = 1) +  -->
+<!--   labs(x = TeX("Nominal coverage, $(1 - \\alpha)$"), -->
+<!--        y = "Proportion", -->
+<!--        title = sprintf("Coverage at deciles")) + -->
+<!--   geom_vline(xintercept = 0.6, lty = 2) +  -->
+<!--   xlim(0, 1) + -->
+<!--   ylim(0, 1) +  -->
+<!--   theme_bw() + -->
+<!--   scale_colour_manual(name = "", -->
+<!--                       values = colour_values, -->
+<!--                       breaks = names_list$scorecard) + -->
+<!--   scale_alpha_continuous(breaks = 1:10) +  -->
+<!--   # guides(alpha = FALSE) + -->
+<!--   theme(legend.position = "bottom") + -->
+<!--   NULL -->
+
+<!-- ``` -->
+
+\newpage
+
+## Median interval width (across locations)
+
+What is the median length (across locations) of $(\hat q_{\alpha/2},\hat q_{1-\alpha/2})$? How does it differ by day?
+
+```{r interval-width, echo = FALSE,warning = FALSE, fig.width = 9, fig.height = 11}
+diagnostic_plots$interval_width_boxplot
+
+diagnostic_plots$interval_width_plot + 
+  geom_vline(xintercept = 0.6, lty = 2)
+```
+
+# Boxplots
+
+### Boxplot of Absolute errors:
+
+```{r boxplot-err_abs, echo = FALSE}
+score_card_bound %>% 
+  ggplot(aes(x = as.factor(forecast_date), y = log(1+err_abs), colour = scorecard)) +
+  geom_boxplot() + 
+  # scale_y_log10() + 
+  labs(x = "Forecast Date",
+       y = "log_pad(Absolute error)",
+       title = sprintf("Forecaster performance over time (all %s)", geo_type_plural)) +
+  scale_colour_manual(values = colour_values,
+                      breaks = names_list$scorecard) + 
+  theme_bw()
+```
+
+<!-- ```{r boxplot-err_abs_b, echo = FALSE} -->
+<!-- score_card_bound %>%  -->
+<!--   filter(location %in% above) %>%  -->
+<!--   ggplot(aes(x = as.factor(forecast_date), y = log(1+err_abs), colour = scorecard)) + -->
+<!--   geom_boxplot() +  -->
+<!--   # scale_y_log10() +  -->
+<!--   labs(x = "Forecast Date", -->
+<!--        y = "log_pad(Absolute error)", -->
+<!--        title = sprintf("Forecaster performance over time (%s w/ >= %s deaths in week before %s)", -->
+<!--                        geo_type_plural, -->
+<!--                        thresh, -->
+<!--                        first_forecast_date)) + -->
+<!--   scale_colour_manual(values = colour_values, -->
+<!--                       breaks = names_list$scorecard) +  -->
+<!--   theme_bw() -->
+<!-- ``` -->
+
+\newpage
+Number of locations where the scorecards have the same error, and number of locations where we cannot compare due to NAs predictions:
+
+```{r na_howmany, echo = FALSE}
+score_card_diff %>%
+  group_by(forecast_date) %>%
+  summarise(`Zero Pred & Error` = sum(err_abs_diff == 0 & actual == 0, na.rm = TRUE),
+            `NA Error` = sum(is.na(err_abs_diff))) %>%
+  kable(format = kable_format)
+```
+
+
+  
+
+## Boxplot of differences in Absolute Errors, when the two scorecards have different errors:
+
+```{r boxplot-err_abs_diff, echo = FALSE}
+score_card_diff %>%
+  filter(!(err_abs_diff == 0 & actual == 0), !is.na(err_abs_diff)) %>%
+  ggplot(aes(x = as.factor(forecast_date), y = sign(err_abs_diff)*log(1+abs(err_abs_diff)))) +
+  geom_hline(yintercept = 0, linetype = 2) +
+  geom_boxplot() +
+  labs(x = "Forecast Date",
+       y = "signed_log_pad(difference of err_abs)",
+       title = sprintf("Boxplot of Difference in absolute error \n%s - %s", err_names[1], err_names[2])) +
+  theme_bw()
+```
+
+<!-- Same idea but restricted to the `r num_above` `r geo_type_plural` having at -->
+<!-- least `r thresh` deaths in the week leading up to `r first_forecast_date`: -->
+
+<!-- ```{r boxplot-err_abs_diff_b, echo = FALSE} -->
+<!-- score_card_diff %>% -->
+<!--   filter(location %in% above) %>%  -->
+<!--   filter(!(err_abs_diff == 0 & actual == 0), !is.na(err_abs_diff)) %>% -->
+<!--   ggplot(aes(x = as.factor(forecast_date), y = sign(err_abs_diff)*log(1+abs(err_abs_diff)))) + -->
+<!--   geom_hline(yintercept = 0, linetype = 2) + -->
+<!--   geom_boxplot() + -->
+<!--   labs(x = "Forecast Date", -->
+<!--        y = "signed_log_pad(difference of err_abs)", -->
+<!--        title = sprintf("Boxplot of Difference in absolute error \n%s - %s", err_names[1], err_names[2])) + -->
+<!--   theme_bw() -->
+<!-- ``` -->
+
+\newpage
+
+## Scatterplot of Absolute Errors:
+
+```{r scatterplot, echo = FALSE}
+
+score_card_diff %>%
+  filter(!(err_abs_diff == 0 & actual == 0), !is.na(err_abs_diff)) %>%
+  left_join(geo_info, by = "location") %>%
+  group_by(forecast_date) %>%
+  top_n(300, wt = population) %>%
+  ungroup() %>%
+  mutate(population_group = (cut(population,
+                                 breaks = unique(quantile(population, 
+                                                    probs = seq(0, 1, by = 0.1)) * 
+                                   c(0.9, rep(1, 9), 1.1)),
+                                 labels = FALSE))) %>%
+  ggplot(aes(x = log(1 + !!rlang::sym(err_names[1])), y = log(1 + !!rlang::sym(err_names[2])))) +
+  facet_wrap(~ forecast_date) +
+  geom_point(aes(size = population_group), alpha = 0.15, colour = "darkgreen") +
+  geom_abline(intercept = 0, slope = 1) +
+  guides(size = FALSE,
+         alpha = FALSE) +
+  coord_fixed() +
+  theme_bw() + 
+  labs(x = names_list$scorecard[1], 
+       y = names_list$scorecard[2],
+       title = sprintf("Absolute Errors on log scale, top 300 %s by population",
+                       geo_type_plural)) +
+  NULL
+
+```
+
+
+<!-- ### Which locations have `NA` for their error? -->
+
+<!-- ```{r na_loc, echo = FALSE} -->
+<!-- na_tbl <- score_card_bound %>%  -->
+<!--   filter(na_prediction) %>%  -->
+<!--   group_by(scorecard) %>% -->
+<!--   count(location) %>% -->
+<!--   ungroup -->
+<!-- if (nrow(na_tbl) > 0) { -->
+<!--   na_tbl %>% -->
+<!--   rename(num_dates_missing = n) %>%  -->
+<!--   kable(format = kable_format) -->
+<!-- } else { -->
+<!--   cat("No NAs!", fill = TRUE) -->
+<!-- } -->
+<!-- ``` -->
+
+\newpage
+## Errors by location:
+
+**`r str_to_title(geo_type_plural)` by average point estimate error:**
+```{r, echo = FALSE}
+# Locations sorted by mean absolute error across all scorecards
+location_by_error <- errs_by_location %>%
+  group_by(location) %>%
+  summarise(global_mean_err_abs = mean(mean_err_abs,na.rm = T)) %>%
+  ungroup() %>%
+  arrange(desc(global_mean_err_abs)) %>%
+  top_n(n_display_regions, wt = global_mean_err_abs)
+
+# Errors by location table
+errs_by_location_all_scorecards <- errs_by_location %>%
+  select(-mean_err) %>%
+  pivot_wider(names_from = "scorecard",values_from = "mean_err_abs") %>%
+  right_join(location_by_error,by = "location")
+
+round1 <- function(x){round(x,1)}
+errs_by_location_tbl <- errs_by_location_all_scorecards %>%
+  mutate_if(is.numeric,list(round1)) %>%
+  mutate_all(as.character)
+for(ii in 1:nrow(errs_by_location_tbl))
+{
+  competitors <- errs_by_location_tbl[ii,] %>% 
+    select(-c(location,location_name,global_mean_err_abs)) %>%
+    names()
+  winner <- errs_by_location_tbl[ii,competitors] %>% 
+    mutate_all(as.numeric) %>%
+    which.min() %>% 
+    names()
+  loser <- errs_by_location_tbl[ii,competitors] %>% 
+    mutate_all(as.numeric) %>%
+    which.max() %>% 
+    names()
+  
+  # color the winner green, and the loser red
+  if  (output_format == 'pdf_document') {
+    errs_by_location_tbl[ii,winner] <- paste0("\\textcolor{green}{",errs_by_location_tbl[ii,winner],"}")
+    errs_by_location_tbl[ii,loser]  <- paste0("\\textcolor{red}{",errs_by_location_tbl[ii,loser],"}")
+  } else if (output_format == 'html_document') {
+    errs_by_location_tbl[ii,winner] <- paste0("<span style = \"color:green\">",
+                                              errs_by_location_tbl[ii,winner],
+                                              "</span>")
+    errs_by_location_tbl[ii,loser]  <- paste0("<span style = \"color:red\">",
+                                              errs_by_location_tbl[ii,loser],
+                                              "</span>")
+  }
+}
+
+# Give the locations a more parsimonious name
+errs_by_location_tbl[["location_name"]] <- gsub("County","",errs_by_location_tbl[["location_name"]])
+errs_by_location_tbl %>%
+  select(-c(location,global_mean_err_abs)) %>%
+  kable(format = "markdown")
+```
+
+
+### By population size:
+
+
+```{r deciles-boxplots, echo = FALSE, fig.height = 8}
+
+score_card_bound %>% 
+  filter(!is.na(err)) %>% 
+  left_join(geo_info %>%
+              mutate(population_group = as.factor(cut(population,
+                                                      breaks = pop_deciles,
+                                                      labels = FALSE))) %>%
+              select(location, population_group),
+            by = "location") %>% 
+  ggplot(aes(x = population_group, y = log(1+err), colour = scorecard)) +
+  geom_boxplot() +
+  # scale_y_log10() +
+  facet_wrap(~ forecast_date, ncol = 2) +
+  labs(x = "Population Decile",
+       y = "log_pad(err)") +
+  theme(legend.position = "bottom") +
+  scale_colour_manual(name = "",
+                      values = colour_values,
+                      breaks = names_list$scorecard) +
+  theme_bw() +
+  theme(legend.position = "bottom") +
+  NULL
+```
+
+The population sizes defining the deciles are as follows:
+```{r, echo=FALSE}
+pop_deciles[c(-1, -11)]
+```
+
+\newpage
+
+
+```{r echo = FALSE, linewidth = 60}
+sprintf("The %d %s with the worst absolute errors across all scorecards are: %s",
+          n_display_regions,
+          geo_type_plural,
+          paste(worst_errors_regions$location_name, collapse = ", "))
+
+sprintf("The top %d biggest %s are: %s", 
+          n_display_regions,
+          geo_type_plural,
+          paste(biggest_regions$location_name, collapse = ", "))
+
+sprintf("The top %d %s with the largest difference in error between the scorecards are: %s",
+          n_display_regions,
+          geo_type_plural,
+          paste(diff_error_regions$location_name, collapse = ", "))
+
+sprintf("The top %d %s with zero actual counts but nonzero predictions are: %s",
+          n_display_regions,
+          geo_type_plural,
+          paste(predict_outbreak_regions$location_name, collapse = ", "))
+```
+
+\newpage
+# Tables
+
+### Absolute error: (`abs(actual - median)`)
+
+Across all `r geo_type_plural`:
+
+```{r table1, echo = FALSE}
+table_quantiles = c(.5, .70, .80, .90, .95, 0.99)
+score_card_bound %>%
+  group_by(forecast_date, scorecard, straw) %>% 
+  group_modify(~ enframe(my_summary(.x$err_abs, quantiles = table_quantiles))) %>% 
+  pivot_wider(names_from = name, values_from = value) %>% 
+  ungroup() %>%
+  arrange(forecast_date, straw) %>%
+  select(-straw) %>%
+  kable(format = kable_format, digits = 2) %>%
+  kable_styling() %>% 
+  row_spec(row = nlist * (0:(num_dates-1)) + 1, bold = TRUE) %>%
+  row_spec(row = nlist * (0:(num_dates-1)) + 2, italic = TRUE, color = "red") %>%
+  row_spec(row = leftover_rows, italic = TRUE)
+```
+
+Across the `r num_above` having at least `r thresh` deaths in the week leading up to `r first_forecast_date`:
+
+```{r table1b, echo = FALSE}
+score_card_bound %>%
+  filter(location %in% above) %>% 
+  group_by(forecast_date, scorecard, straw) %>% 
+  group_modify(~ enframe(my_summary(.x$err_abs, quantiles = table_quantiles))) %>% 
+  pivot_wider(names_from = name, values_from = value) %>% 
+  ungroup() %>%
+  arrange(forecast_date, straw) %>%
+  select(-straw) %>%
+  kable(format = kable_format, digits = 2) %>%
+  kable_styling() %>% 
+  row_spec(row = nlist * (0:(num_dates-1)) + 1, bold = TRUE) %>%
+  row_spec(row = nlist * (0:(num_dates-1)) + 2, italic = TRUE, color = "red") %>%
+  row_spec(row = leftover_rows, italic = TRUE)
+```
+
+### Absolute error on log scale: (`abs(log_pad(actual) - log_pad(median))`)
+```{r table2, echo = FALSE}
+score_card_bound %>%
+  group_by(forecast_date, scorecard, straw) %>% 
+  group_modify(~ enframe(my_summary(.x$err_abs_log, quantiles = table_quantiles))) %>% 
+  pivot_wider(names_from = name, values_from = value) %>% 
+  ungroup() %>%
+  arrange(forecast_date, straw) %>%
+  select(-straw) %>%
+  kable(format = kable_format, digits = 2) %>%
+  kable_styling() %>% 
+  row_spec(row = nlist * (0:(num_dates-1)) + 1, bold = TRUE) %>%
+  row_spec(row = nlist * (0:(num_dates-1)) + 2, italic = TRUE, color = "red") %>%
+  row_spec(row = leftover_rows, italic = TRUE)
+```
+
+### Weighted interval score:
+```{r table3, echo = FALSE}
+score_card_bound %>%
+  group_by(forecast_date, scorecard, straw) %>% 
+  group_modify(~ enframe(my_summary(.x$err, quantiles = table_quantiles))) %>% 
+  pivot_wider(names_from = name, values_from = value) %>% 
+  ungroup() %>%
+  arrange(forecast_date, straw) %>%
+  select(-straw) %>%
+  kable(format = kable_format, digits = 2) %>%
+  kable_styling() %>% 
+  row_spec(row = nlist * (0:(num_dates-1)) + 1, bold = TRUE) %>%
+  row_spec(row = nlist * (0:(num_dates-1)) + 2, italic = TRUE, color = "red") %>%
+  row_spec(row = leftover_rows, italic = TRUE)
+```
+
+
+\newpage
+# Time Series Plots
+
+**Plots of predicted vs. actual for the locations selected:**
+
+```{r time-series-plots,echo = FALSE,warning = FALSE, fig.height=11, fig.width = 9}
+time_series_plots <- diagnostic_plots$time_series_plots
+for(i in 1:length(time_series_plots)){
+  tryCatch(print(time_series_plots[[i]]), error=function(e) {print(sprintf("No locations considered in location group %d",i))})
+  cat("\n")
+}
+
+```
+
+<!-- \newpage -->
+<!-- **Plots of residuals for the locations selected:** -->
+
+<!-- ```{r residuals-plots,echo = FALSE,warning = FALSE, fig.height=11, fig.width = 9} -->
+<!-- residual_plots <- diagnostic_plots$residual_plots -->
+<!-- for(i in 1:length(residual_plots)){ -->
+<!--   print(residual_plots[[i]]) -->
+<!--   cat("\n") -->
+<!-- } -->
+<!-- ``` -->
+

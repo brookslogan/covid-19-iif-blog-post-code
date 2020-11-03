@@ -1,0 +1,25 @@
+Package: quantileEnsemble
+Title: The quantileEnsemble forecaster
+Version: 20200618-114037
+Authors@R: 
+    c(person(given = "Aaron",
+             family = "Rumack",
+             role = c("aut"),
+             email = "arumack@andrew.cmu.edu"),
+      person(given = "Logan",
+             family = "Brooks",
+             role = c("aut","cre"),
+             email = "lcbrooks@andrew.cmu.edu"),
+      person(given = "Jacob",
+             family = "Bien",
+             role = c("aut"),
+             email = "jbien@usc.edu"))
+Description: The quantileEnsemble forecaster.
+License: check what license we can use
+Encoding: UTF-8
+Imports: pipeR, data.table, tibble, fs, dplyr, tibble, quantgen, quadprog, stringi
+Suggests: testthat
+Remotes: github::ryantibs/quantgen/R-package/quantgen
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+

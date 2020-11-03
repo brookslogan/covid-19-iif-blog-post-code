@@ -1,0 +1,467 @@
+---
+title: "Forecast Evaluation with Mixed Models"
+author: "Jacob Bien"
+date: "8/2/2020"
+output: html_document
+params:
+    forecaster_names: "COVIDhub-ensemble;COVIDhub-baseline"
+    response:       "jhu-csse_deaths_incidence_num"
+    eval_aheads:    "1;2;3;4"
+    eval_locations: "ALL"
+    min_available_aheads_per_timeloc: "1"
+    dropfirst: "0"
+    plot_prefix:    ""
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+forecaster_names = strsplit(params[["forecaster_names"]], ";")[[1L]]
+response = params[["response"]]
+eval_aheads = as.integer(strsplit(params[["eval_aheads"]],";")[[1L]])
+eval_locations = strsplit(params[["eval_locations"]],";")[[1L]]
+dropfirst = as.integer(params[["dropfirst"]])
+plot_prefix = params[["plot_prefix"]]
+min_available_aheads_per_timeloc = as.integer(params[["min_available_aheads_per_timeloc"]])
+
+cat(forecaster_names)
+cat(eval_aheads)
+cat(eval_locations)
+```
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(evalforecast)
+library(ordinal) # must load before lme4 for lme4 implementations to survive
+library(lme4)
+library(effects)
+source("prob_forecast_evaluation_coverage.R")
+## Load scorecards, configure settings:
+ensemble_scorecard_meta <-
+  locate_cards("../../covid-19-iif-blog-post-data/largecards/ensembles",
+                                        dir_order = c("ahead",
+                                                      "response",
+                                                      "geo_type",
+                                                      "incidence_period",
+                                                      "n_locations",
+                                                      "forecaster")) %>%
+    dplyr::filter(forecaster %in% forecaster_names)
+scorecard_meta <- locate_cards("../../covid-19-iif-blog-post-data/largecards/components_inconly",
+                               dir_order = c("ahead",
+                                             "response",
+                                             "geo_type",
+                                             "incidence_period",
+                                             "n_locations",
+                                             "forecaster")) %>%
+    dplyr::filter(forecaster %in% forecaster_names) %>%
+    dplyr::anti_join(ensemble_scorecard_meta[c("ahead","response","geo_type","incidence_period","n_locations","forecaster")],
+                     by=c("ahead","response","geo_type","incidence_period","n_locations","forecaster"))
+forecaster.colors = c(
+  "COVIDhub-baseline"             = "#003300",
+  "COVIDhub-ensemble"             = "#336633",
+  "hayman_ens_v1_selhub8"         = "#888888",
+  ## "qspace_ew_md_ens_v1_inconly"   = "#88AA44",
+  "qspace_ew_md_ens_v1_inconly"   = "#0571b0",
+  "qspace_ew_md_ens_v1_all"       = "#88AA44",
+  "qspace_ew_md_ens_v1_selhub8"   = "#88EE44",
+  ## "qspace_ew_mean_ens_v1_inconly" = "#88AAAA",
+  ## "qspace_ew_mean_ens_v1_inconly" = "#0022AA",
+  "qspace_ew_mean_ens_v1_inconly" = "#92c5de",
+  "qspace_ew_mean_ens_v1_all"     = "#88AAAA",
+  "qspace_ew_mean_ens_v1_selhub8" = "#88EEAA",
+  "ensemble1_cdc_dup"             = "#444444",
+  "ensemble3_cdc_dup"             = "#999944",
+  "ensemble23_cdc_dup"            = "#EEEE44",
+  "ensemble1_cdc_impute"          = "#004444",
+  "ensemble3_cdc_impute"          = "#009944",
+  "ensemble23_cdc_impute"         = "#00EE44",
+  "ensemble3train_cdc_impute"     = "#009999",
+  "ensemble3_comb4_impute"        = "#449944",
+  "ensemble1_cdc_all_dup"         = "#AA00AA",
+  "ensemble3_cdc_all_dup"         = "#CC00AA",
+  "ensemble23_cdc_all_dup"        = "#FF00AA",
+  "ensemble3train_cdc_all_dup"    = "#FF00FF",
+  "ensemble1_cdc_all_dup_re"      = "#AA00AA",
+  "ensemble3_cdc_all_dup_re"      = "#CC00AA",
+  "ensemble23_cdc_all_dup_re"     = "#FF00AA",
+  "ensemble3train_cdc_all_dup_re" = "#FF00FF",
+  "ensemble1_cdc_inconly"         = "#AA0066",
+  ## "ensemble3_cdc_inconly"         = "#CC0066",
+  "ensemble3_cdc_inconly"         = "#ca0020",
+  "ensemble23_cdc_inconly"        = "#FF0066",
+  "ensemble3train_cdc_inconly"    = "#FF44FF",
+  "ensemble3_cdc_inconly_testdate"         = "#FF4400",
+  "cdf_raw_ens_v0_selhub8"        = "#440000",
+  "cdf_rwt2_ens_v0_selhub8"       = "#770000",
+  "cdf_rwt2_ens_v0_selhub8_v1pre" = "#990000",
+  "cdf_rwt2_ens_v0_selhub8_v1"    = "#CC0000",
+  "cdf_rwt2imp_ens_v0_selhub8"    = "#FF0000",
+  ## "YYG-ParamSearch"               = "#000055",
+  ## "YYG-ParamSearch"               = "#0022AA",
+  ## "YYG-ParamSearch"               = "#88AAAA",
+  ## "YYG-ParamSearch"               = "#f7f7f7",
+  ## "YYG-ParamSearch"               = "#ffffbf",
+  "YYG-ParamSearch"               = "#fdae61",
+  ## "UMass-MechBayes"               = "#006644",
+  ## "UMass-MechBayes"               = "#f4a582",
+  "UMass-MechBayes"               = "#abdda4",
+  "Covid19Sim-Simulator"          = "#0000AA"
+)
+forecaster.labels = c(
+  ## "COVIDhub-baseline"             = "CHbase",
+  "COVIDhub-baseline"             = "Baseline forecaster",
+  "COVIDhub-ensemble"             = "CHens",
+  "hayman_ens_v1_selhub8"         = "hay_v1",
+  ## "qspace_ew_md_ens_v1_inconly"   = "QEWMD_allinc",
+  "qspace_ew_md_ens_v1_inconly"   = "QuantMedian",
+  "qspace_ew_md_ens_v1_all"       = "QEWMD_allwide",
+  "qspace_ew_md_ens_v1_selhub8"   = "QEWMD",
+  ## "qspace_ew_mean_ens_v1_inconly" = "QEWAM_allinc",
+  "qspace_ew_mean_ens_v1_inconly" = "QuantMean",
+  "qspace_ew_mean_ens_v1_all"     = "QEWAM_allwide",
+  "qspace_ew_mean_ens_v1_selhub8" = "QEWAM",
+  "ensemble1_cdc_dup"             = "QG1",
+  "ensemble3_cdc_dup"             = "QG3",
+  "ensemble23_cdc_dup"            = "QG23",
+  "ensemble1_cdc_impute"          = "QG1_imp",
+  "ensemble3_cdc_impute"          = "QG3_imp",
+  "ensemble23_cdc_impute"         = "QG23_imp",
+  "ensemble3train_cdc_impute"     = "QG3only_imp",
+  "ensemble3_comb4_impute"        = "QG3_comb4_imp",
+  "ensemble1_cdc_all_dup"         = "QG1_allwide_imp",
+  "ensemble3_cdc_all_dup"         = "QG3_allwide_imp",
+  "ensemble23_cdc_all_dup"        = "QG23_allwide_imp",
+  "ensemble3train_cdc_all_dup"    = "QG3only_allwide_imp",
+  "ensemble1_cdc_all_dup_re"      = "QG1_allwide_imp",
+  "ensemble3_cdc_all_dup_re"      = "QG3_allwide_imp",
+  "ensemble23_cdc_all_dup_re"     = "QG23_allwide_imp",
+  "ensemble3train_cdc_all_dup_re" = "QG3only_allwide_imp",
+  "ensemble1_cdc_inconly"         = "QG1_allinc_imp",
+  ## "ensemble3_cdc_inconly"         = "QG3_allinc_imp",
+  "ensemble3_cdc_inconly"         = "QuantTrained",
+  "ensemble23_cdc_inconly"        = "QG23_allinc_imp",
+  "ensemble3train_cdc_inconly"    = "QG3only_allinc_imp",
+  "ensemble3_cdc_inconly_testdate"         = "QG3_allinc_imp_testdate",
+  "cdf_raw_ens_v0_selhub8"        = "CDF_v0.0",
+  "cdf_rwt2_ens_v0_selhub8"       = "CDF_v0.2",
+  "cdf_rwt2_ens_v0_selhub8_v1pre" = "CDF_v1.2.0",
+  "cdf_rwt2_ens_v0_selhub8_v1"    = "CDF_v1.2.1",
+  "cdf_rwt2imp_ens_v0_selhub8"    = "CDF_v1.2.1_imp",
+  ## "YYG-ParamSearch"               = "Highly ranked component A",
+  ## "UMass-MechBayes"               = "Highly ranked component B"
+  "YYG-ParamSearch"               = "Top forecaster A",
+  "UMass-MechBayes"               = "Top forecaster B"
+)
+
+## data.env = readRDS("../../../covidcast-forecast-scratch/trimmed-07-27/trimmed-data-env-08-16.rds")
+## original.df = data.env[["data_list"]][["state"]]
+## 
+## corrections =
+##     readr::read_csv("../../forecaster_code/pipeline_code/common_funs/data/corrections_state.csv",
+##                     col_types=readr::cols(location=readr::col_character(), value=readr::col_double()))
+##     
+## corrected.df =
+##   dplyr::left_join(
+##     original.df,
+##     corrections,
+##     by=setdiff(names(original.df), "value"),
+##     suffix = c("_original", "_corrected")
+##   ) %>%
+##   dplyr::mutate(value = dplyr::coalesce(value_corrected, value_original)) %>%
+##   dplyr::select(-value_corrected, -value_original) %>%
+corrected.df =
+  readRDS("../../covid-19-iif-blog-post-data/signals/upstream_df_state_2020-10-11_final_corrected_trimmed.RDS") %>%
+  dplyr::filter(variable_name == response) %>%
+  dplyr::group_by(location, location_name, issue_date) %>%
+  dplyr::arrange(reference_date) %>%
+  dplyr::mutate(value7 = zoo::rollsumr(value, 7L, na.pad=TRUE))
+
+median_k = 12L
+
+validation_window_length = 4L # see below if this is actually used and how
+
+all_scorecards =
+    dplyr::bind_rows(scorecard_meta, ensemble_scorecard_meta) %>%
+    tidyr::pivot_wider(id_cols=c(ahead,response,geo_type,incidence_period,n_locations), names_from="forecaster", values_from="filename") %>%
+    na.omit() %>%
+    tidyr::pivot_longer(-c(ahead,response,geo_type,incidence_period,n_locations), names_to="forecaster", values_to="filename") %>%
+    dplyr::mutate(scorecard=lapply(filename, readRDS)) %>%
+    ## tidyr::unnest(scorecard) %>%
+    ## dplyr::mutate(target_sunday = target_start - as.POSIXlt(target_start)$wday) %>%
+    ## dplyr::left_join(corrections %>%
+    ##                  dplyr::mutate(is_corrected=TRUE) %>%
+    ##                  dplyr::mutate(target_sunday = reference_date - as.POSIXlt(reference_date)$wday),
+    ##                  by=c("location", "location_name", "target_sunday", "response"="variable_name")) %>%
+    ## mutate(actual = dplyr::if_else(!is.na(is_corrected), value, actual),
+    ##        err = {
+    ##            if (any(!is.na(is_corrected) & is_corrected & !is.na(value))) stop ('cannot handle corrections to non-NA values')
+    ##            else dplyr::if_else(!is.na(is_corrected) & is_corrected, NA_real_, err)
+    ##        }) %>%
+    ## dplyr::select(-reference_date, -issue_date, -value) %>%
+    ## dplyr::filter(!is.na(actual)) %>%
+    ## dplyr::group_by(ahead, response, geo_type, incidence_period, n_locations, forecaster, filename) %>%
+    ## tidyr::nest() %>%
+    ## dplyr::rename(scorecard=data) %>%
+    ##
+    dplyr::mutate(scorecard = lapply(scorecard, . %>% mutate(forecast_date=as.Date(forecast_date),
+                                                             target_start=as.Date(target_start),
+                                                             target_end=as.Date(target_end)
+                                                             ))) %>%
+    tidyr::unnest(scorecard) %>%
+    dplyr::mutate(point_est = vapply(forecast_distribution, function(df) df[["quantiles"]][[median_k]], numeric(1L))) %>%
+    dplyr::filter(!is.na(actual) & !is.na(err)) %>%
+    dplyr::mutate(ahead=as.integer(ahead)) %>%
+    ## dplyr::filter(forecast_date >= max(forecast_date) - 7L*validation_window_length) %>%
+    ## dplyr::filter(forecast_date <= max(forecast_date) - 7L*(validation_window_length+1L+ahead)) %>%
+    dplyr::group_by(ahead,response,geo_type,incidence_period,n_locations,location,location_name,forecaster) %>%
+    ## dplyr::arrange(forecast_date) %>%
+    ## dplyr::slice(seq.int(dropfirst+1L, dplyr::n())) %>%
+    dplyr::filter(forecast_date >= min(forecast_date) + 7L*dropfirst) %>%
+    dplyr::ungroup() %>%
+    dplyr::group_by(ahead,response,geo_type,incidence_period,n_locations,location,location_name,forecast_date) %>%
+    dplyr::filter(., dplyr::n() == length(unique(.[["forecaster"]]))) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(err_abs = get_median_error(actual, forecast_distribution)) %>% 
+    dplyr::mutate(err_abs_log = get_median_log_error(actual, forecast_distribution)) %>%
+    dplyr::filter(!is.na(err_abs) & !is.na(err_abs_log)) %>%
+    dplyr::mutate(fc = factor(forecaster, forecaster_names)) %>%
+    identity()
+
+scorecards =
+  all_scorecards %>%
+  {
+    if (identical(eval_locations, "ALL")) {
+      .
+    } else {
+      dplyr::filter(., location %in% eval_locations)
+    }
+  } %>%
+  dplyr::group_by(forecast_date, forecaster, location) %>%
+  dplyr::filter(dplyr::n() >= min_available_aheads_per_timeloc) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(ahead %in% eval_aheads) %>%
+  dplyr::mutate(ahead_str = sprintf("%d week%s ahead", ahead, dplyr::if_else(ahead==1L, "", "s"))) %>%
+  identity()
+  
+sc = scorecards %>%
+  dplyr::group_by(forecaster, forecast_date) %>%
+  dplyr::group_split()
+  
+sc_df = scorecards %>%
+  dplyr::left_join(corrected.df, by=c("location", "location_name", "forecast_date"="reference_date"), suffix=c("_sc", "_fcdate")) %>%
+  dplyr::rename(value_fcdate = value, value7_fcdate = value7)
+
+## has_na <- sc %>% map_lgl(~ any(is.na(.x$err))) %>% which()
+## scorecard_meta <- scorecard_meta[-has_na, ]
+## forecasters <- scorecard_meta %>% 
+##   count(forecaster, sort = TRUE) %>% 
+##   filter(n >= 11) %>% 
+##   pull(forecaster)
+## forecast_dates <- scorecard_meta %>% 
+##   filter(forecaster %in% forecasters) %>% 
+##   count(forecast_date) %>% 
+##   filter(n >= 4) %>% 
+##   pull(forecast_date)
+## scorecard_meta <- scorecard_meta %>% 
+##   filter(forecaster %in% forecasters, forecast_date %in% forecast_dates)
+## sc <- scorecard_meta$filename %>% 
+##   map(readRDS)
+## names(sc) <- scorecard_meta$forecaster
+## sc_df <- bind_rows(sc, .id = "forecaster")
+## sc_df <- sc_df %>% 
+##   mutate(forecaster = as.factor(forecaster))
+```
+
+Untransformed WIS boxplot:
+```{r}
+sc_df %>% 
+  ggplot(aes(x = fc, y = err, colour = fc)) +
+  geom_boxplot() + 
+  geom_point(aes(y=y, shape=Annotation),
+             data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err), .groups="drop_last") %>% mutate(Annotation="mean(WIS)"),
+             size=6
+             ) +
+  ## geom_hline(aes(yintercept=y, colour=fc),
+  ##            data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err), .groups="drop_last") %>% mutate(Annotation="mean(WIS)")
+  ##            ) +
+  facet_wrap(~ ahead_str) + 
+  scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
+  scale_colour_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
+  scale_shape_manual(values=18) +
+  labs(x="Forecaster", y="Weighted Interval Score") +
+  coord_flip()
+ggsave(paste0(plot_prefix,"raw_wis_boxplot.pdf"),width=7,height=5,units="in")
+```
+
+Log WIS boxplot:
+```{r}
+sc_df %>% 
+  ggplot(aes(x = fc, y = log(err), colour = fc)) +
+  geom_boxplot() + 
+  geom_point(aes(y=y, shape=Annotation),
+             data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=log(mean(err)), .groups="drop_last") %>% mutate(Annotation="log(mean(WIS))"),
+             size=3
+             ) +
+  ## geom_hline(aes(yintercept=y, colour=fc),
+  ##            data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=log(mean(err)), .groups="drop_last") %>% mutate(Annotation="log(mean(WIS))")
+  ##            ) +
+  facet_wrap(~ ahead_str) + 
+  scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
+  scale_colour_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
+  scale_shape_manual(values=18) +
+  labs(x="Forecaster", y="log(WIS)") +
+  coord_flip()
+ggsave(paste0(plot_prefix,"log_wis_boxplot.pdf"),width=7,height=5,units="in")
+```
+
+Latest-relative boxplot:
+```{r}
+sc_df %>% 
+  ggplot(aes(x = fc, y = err/(value7_fcdate+1), colour = fc)) +
+  geom_boxplot() + 
+  geom_point(aes(y=y, shape=Annotation),
+             data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err/(value7_fcdate+1)), .groups="drop_last") %>% mutate(Annotation="Mean"),
+             size=3
+             ) +
+  ## geom_hline(aes(yintercept=y, colour=fc),
+  ##            data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err/(value7_fcdate+1)), .groups="drop_last") %>% mutate(Annotation="Mean")
+  ##            ) +
+  facet_wrap(~ ahead_str) + 
+  scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
+  scale_colour_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
+  labs(x="Forecaster", y="WIS relative to past week's value plus one") +
+  coord_flip()
+ggsave(paste0(plot_prefix,"pastrel_wis_boxplot.pdf"),width=7,height=5,units="in")
+```
+
+Untransformed WIS violinplot:
+```{r}
+sc_df %>% 
+  ggplot(aes(x = fc, y = err, fill = fc)) +
+  geom_violin() + 
+  facet_wrap(~ ahead_str) + 
+  scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
+  scale_fill_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
+  labs(x="Forecaster", y="WIS") +
+  coord_flip()
+ggsave(paste0(plot_prefix,"raw_wis_violinplot.pdf"),width=7,height=5,units="in")
+```
+
+Log WIS violinplot:
+```{r}
+sc_df %>% 
+  ggplot(aes(x = fc, y = log(err), fill = fc)) +
+  geom_violin() + 
+  facet_wrap(~ ahead_str) + 
+  scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
+  scale_fill_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
+  labs(x="Forecaster", y="log(WIS)") +
+  coord_flip()
+ggsave(paste0(plot_prefix,"log_wis_violinplot.pdf"),width=7,height=5,units="in")
+```
+
+
+
+
+```{r}
+devtools::load_all("../quantileEnsemble")
+prob10i <- which(cdc_probs == 0.1)
+prob90i <- which(round(cdc_probs, 3L) == 0.900)
+prob20i = which(cdc_probs == 0.2)
+prob80i = which(cdc_probs == 0.8)
+problowi <- 1L
+probhighi <- length(cdc_probs)
+
+scorecard_group_summary = function(scorecards_df) {
+    scorecards_df %>%
+        dplyr::summarize(
+                   mean_err = mean(err),
+                   mean_abs_err = mean(abs(point_est - actual)),
+                   pbelow20 = mean(actual < sapply(forecast_distribution, function(df) df[["quantiles"]][[prob20i]])),
+                   pabove80 = mean(actual > sapply(forecast_distribution, function(df) df[["quantiles"]][[prob80i]])),
+                   cov2080 = 1 - pbelow20 - pabove80,
+                   pbelow10 = mean(actual < sapply(forecast_distribution, function(df) df[["quantiles"]][[prob10i]])),
+                   pabove90 = mean(actual > sapply(forecast_distribution, function(df) df[["quantiles"]][[prob90i]])),
+                   cov1090 = 1 - pbelow10 - pabove90,
+                   pbelowlow = mean(actual < sapply(forecast_distribution, function(df) df[["quantiles"]][[problowi]])),
+                   pabovehigh = mean(actual > sapply(forecast_distribution, function(df) df[["quantiles"]][[probhighi]])),
+                   covlowhigh = 1 - pbelowlow - pabovehigh,
+                   median_err = median(err),
+                   eighty_err = quantile(err, 0.8),
+                   wi_eighty_merr = mean(err[err <= quantile(err, 0.8)]),
+                   respweight_mean_err = weighted.mean(err, actual),
+                   wi_eighty_mae = {ae = abs(point_est - actual); mean(ae[ae <= quantile(ae, 0.8)])},
+                   n = dplyr::n(),
+                   mean_actual = mean(actual),
+                   .groups="drop_last") %>%
+        {.}
+}
+
+scorecard_summary =
+    scorecards %>%
+    dplyr::group_by(ahead,ahead_str,geo_type,forecaster,fc) %>%
+    scorecard_group_summary() %>%
+    ## dplyr::arrange(ahead, geo_type, respweight_mean_err) %>%
+    ## tidyr::pivot_wider(names_from="forecaster", values_from=c("mean_err","respweight_mean_err","n")) %>%
+    ## tidyr::spread(forecaster, respweight_mean_err) %>%
+    {.}
+
+scorecard_summary_with_time =
+    scorecards %>%
+    dplyr::group_by(ahead,ahead_str,geo_type,forecaster,fc,forecast_date) %>%
+    scorecard_group_summary() %>%
+    {.}
+
+scorecard_summary_with_location =
+    scorecards %>%
+    dplyr::group_by(ahead,ahead_str,geo_type,forecaster,fc,location,location_name) %>%
+    scorecard_group_summary() %>%
+    {.}
+
+scorecard_summary_with_time %>%
+    ggplot2::ggplot(ggplot2::aes(forecast_date, mean_err, colour=fc, group=fc)) +
+    ggplot2::facet_wrap(~ ahead_str) +
+    ggplot2::scale_colour_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels) +
+    ggplot2::geom_point(position=ggplot2::position_dodge(width=3), size=0.5) +
+    ggplot2::geom_line(position=ggplot2::position_dodge(width=3), size=0.5) +
+    ggplot2::xlab("Forecast Date") +
+    ggplot2::ylab("Mean Weighted Interval Score") +
+    ggplot2::theme()
+ggplot2::ggsave(paste0(plot_prefix,"mwis_with_time.pdf"), width=7, height=5, units="in")
+ggplot2::ggsave(paste0(plot_prefix,"mwis_with_time_wide.pdf"), width=7, height=3, units="in")
+
+scorecard_summary_with_location %>%
+    dplyr::mutate(., location = ordered(location,
+                                        dplyr::group_by(., location) %>% dplyr::summarize(to_rank=mean(mean_actual), .groups="drop_last") %>% dplyr::arrange(to_rank) %>% dplyr::pull(location)
+                                        )) %>%
+    ggplot2::ggplot(ggplot2::aes(location, mean_err, colour=forecaster, group=forecaster)) +
+    ggplot2::facet_wrap(~ ahead_str) +
+    ggplot2::theme(axis.text.x = ggplot2::element_blank(),
+                   axis.ticks.x = ggplot2::element_blank()) + 
+    ggplot2::xlab("Location (Sorted by Mean y Values)") +
+    ggplot2::ylab("Mean Weighted Interval Score") +
+    ggplot2::scale_colour_manual(values = forecaster.colors, labels=forecaster.labels) +
+    ggplot2::geom_line()
+ggplot2::ggsave(paste0(plot_prefix,"mwis_with_location.pdf"), width=7, height=5, units="in")
+
+scorecard_summary %>%
+    dplyr::filter(geo_type == "state") %>%
+    dplyr::mutate(., forecaster = ordered(forecaster,
+                                          dplyr::group_by(., forecaster) %>%
+                                          ## dplyr::summarize(mean_mean_err=mean(mean_err), .groups="drop_last") %>%
+                                          dplyr::summarize(mean_mean_err=weighted.mean(mean_err, n), .groups="drop_last") %>%
+                                          dplyr::arrange(-dplyr::coalesce(mean_mean_err, Inf)) %>%
+                                          dplyr::pull(forecaster))) %>%
+    ## dplyr::mutate(., forecaster = ordered(forecaster,
+    ##                                       ## dplyr::filter(., ahead==1L & geo_type=="state") %>%
+    ##                                       dplyr::filter(., ahead==2L & geo_type=="state") %>%
+    ##                                       dplyr::arrange(-dplyr::coalesce(mean_err, Inf)) %>%
+    ##                                       dplyr::pull(forecaster))) %>%
+    ggplot2::ggplot(ggplot2::aes(ahead, forecaster)) +
+    ggplot2::geom_tile(ggplot2::aes(fill=mean_err)) +
+    ggplot2::geom_text(ggplot2::aes(label=round(mean_err,1L))) +
+    ggplot2::scale_fill_distiller(palette="RdYlBu") +
+    ggplot2::scale_y_discrete(labels=forecaster.labels) +
+    ggplot2::ggtitle("mean_err")
+ggplot2::ggsave(paste0(plot_prefix, "wis_heatmaptable.pdf"), width=7, height=5, units="in")
+```

@@ -1,0 +1,43 @@
+Package: evalforecast
+Title: The Forecast Evaluator
+Version: 20200906-152216
+Authors@R: 
+  c(
+    person(given = "Jacob",
+           family = "Bien",
+           role = c("aut", "cre"),
+           email = "jbien@usc.edu"),
+    person(given = "Alden",
+           family = "Green",
+           role = "aut"),
+    person(given = "Balasubramanian",
+           family = "Narasimhan",
+           role = "aut"),
+    person(given = "Samyak",
+           family = "Rajanala",
+           role = "ctb"),
+    person(given = "Aaron",
+           family = "Rumack",
+           role = "ctb"))
+Description: A package for evaluating probabilistic forecasters.
+Depends: R (>= 3.5.0)
+License: MIT + file LICENSE
+Encoding: UTF-8
+Suggests: 
+    testthat (>= 2.1.0)
+RoxygenNote: 7.1.1
+Imports: 
+    dplyr,
+    magrittr,
+    fuzzyjoin,
+    lubridate,
+    purrr,
+    readr,
+    stringr,
+    tibble,
+    tidyr,
+    assertthat,
+    MMWRweek,
+    stats,
+    logger,
+    fs
