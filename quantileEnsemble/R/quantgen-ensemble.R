@@ -175,7 +175,8 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                                             n_traindays = 4,
                                             unit_sum = TRUE,
                                             intercept = FALSE,
-                                            cheating_fit_on_test_date_instead = FALSE) {
+                                            cheating_fit_on_test_date_instead = FALSE,
+                                            debug_weights_folder = NULL) {
     my_forecaster = function(df, forecast_date) {
         print(ahead)
         print(forecast_date)
@@ -221,6 +222,7 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
             na_preds = apply(qf$forecasts,1,function(arr) { any(is.na(arr))})
             st_obj = quantile_ensemble(qf$forecasts[!na_preds,,], qf$actual[!na_preds], fit_taus, tau_groups = tau_groups, noncross = FALSE, lp_solver = "gurobi",
                                        intercept = intercept, unit_sum = unit_sum, verbose=FALSE)
+            orig_weights = st_obj[["alpha"]]
             ## Adjust weights based on number of missing forecasts for each forecaster
             if (impute_missing) {
               ## Calculate weights for each training example
@@ -268,6 +270,19 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
         if (is.null(success)) {
             print(paste0("Could not fit ensemble weights for forecast date ",forecast_date, " and ahead ",ahead,", returning empty tibble"))
             return(tibble(location=character(),probs=numeric(),quantiles=numeric()))
+        }
+
+        if (!is.null(debug_weights_folder)) {
+          debug_weights_file = sprintf("%s/%s/%s/%s/%d/%d/%s.RDS", debug_weights_folder, response, incidence_period, geo_type, n_locations, ahead, forecast_date)
+          cat("Saving weights info to", debug_weights_file, "\n")
+          if (!dir.exists(dirname(debug_weights_file))) {
+            dir.create(dirname(debug_weights_file), recursive=TRUE)
+          }
+          saveRDS(list(
+            weights=st_obj[["alpha"]],
+            orig_weights=orig_weights,
+            forecasters=forecasters
+          ), debug_weights_file)
         }
 
         ensemble_forecasts = predict(st_obj,component_forecasts$forecasts[,,as.character(fit_taus)])

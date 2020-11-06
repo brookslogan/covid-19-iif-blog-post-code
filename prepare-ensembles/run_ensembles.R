@@ -27,8 +27,9 @@ for (ahead in 1:4) {
                                                                  geo_type=geo_type,
                                                                  n_locations=n_locations,
                                                                  repo_root_dirpath = "../../covid-19-iif-blog-post-data")
-    ensemble_forecasters <- ensemble_forecasters[grepl("(ensemble3.*inconly)|(qspace.*inconly)|(ensemble3.*all)|(qspace.*all)", names(ensemble_forecasters))]
+    ## ensemble_forecasters <- ensemble_forecasters[grepl("(ensemble3.*inconly)|(qspace.*inconly)|(ensemble3.*all)|(qspace.*all)", names(ensemble_forecasters))]
     ## ensemble_forecasters <- ensemble_forecasters[grepl("qspace_ew_md_ens_v1_all", names(ensemble_forecasters))]
+    ensemble_forecasters <- ensemble_forecasters[c("ensemble1_cdc_inconly","ensemble3_cdc_inconly")]
 
     for (ensemble_forecaster_i in seq_along(ensemble_forecasters)) {
       ensemble_forecaster = ensemble_forecasters[[ensemble_forecaster_i]]
@@ -39,7 +40,7 @@ for (ahead in 1:4) {
         forecast_dates = lubridate::ymd("2020-10-05") - (7L * seq.int(ahead + 1L, 25L))
         cat(paste0("Forecasting dates ",toString(forecast_dates), " for ahead ",ahead,"\n"))
         output_path  <- fs::path(output_path_1, ahead, response, geo_type, incidence_period, n_locations, ensemble_forecaster_name)
-        if (!file.exists(fs::path(output_path, "scorecard.RDS"))) {
+        ## if (!file.exists(fs::path(output_path, "scorecard.RDS"))) {
           score_card = evalforecast::evaluate_quantile_forecaster(data_list[[geo_type]],
                                                                   ensemble_forecaster[["forecaster"]],
                                                                   response, incidence_period, ahead, geo_type,
@@ -47,7 +48,7 @@ for (ahead in 1:4) {
                                                                   backfill_buffer = 7)
           if (!fs::dir_exists(output_path)) fs::dir_create(output_path, recurse = TRUE)
           saveRDS(score_card, file = fs::path(output_path, "scorecard.RDS"))
-        }
+        ## }
       ## })
     }
   }

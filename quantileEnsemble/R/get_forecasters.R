@@ -535,11 +535,13 @@ get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahea
        , ensemble1_cdc_inconly = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
                                                                  repo_root_dirpath = repo_root_dirpath,
                                                                  forecasters=inconly_forecasters, tau_groups=rep(1,23), impute_missing = TRUE,
-                                                                 fit_taus = fit_taus)
+                                                                 fit_taus = fit_taus,
+                                                                 debug_weights_folder = file.path(repo_root_dirpath, "debug_quantgen_weights", "ensemble1_cdc_inconly"))
        , ensemble3_cdc_inconly = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
                                                                  repo_root_dirpath = repo_root_dirpath,
                                                                  forecasters=inconly_forecasters, tau_groups=tau_groups3, impute_missing = TRUE,
-                                                                 fit_taus = fit_taus)
+                                                                 fit_taus = fit_taus,
+                                                                 debug_weights_folder = file.path(repo_root_dirpath, "debug_quantgen_weights", "ensemble3_cdc_inconly"))
        , ensemble23_cdc_inconly = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
                                                                   repo_root_dirpath = repo_root_dirpath,
                                                                   forecasters=inconly_forecasters, tau_groups=seq_len(23L), impute_missing = TRUE,
