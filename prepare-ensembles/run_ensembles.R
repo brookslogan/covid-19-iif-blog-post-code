@@ -15,7 +15,7 @@ data_list = list(
 ## responses <-  list(county = "usa-facts_deaths_incidence_num", state = "jhu-csse_deaths_incidence_num")
 responses <-  list(state = "jhu-csse_deaths_incidence_num")
 
-output_path_1  <- "../../covid-19-iif-blog-post-data/largecards"
+output_path_1  <- "../../covid-19-iif-blog-post-data/largecards/enesmbles"
 
 incidence_period <- "epiweek"
 n_locations <- 200

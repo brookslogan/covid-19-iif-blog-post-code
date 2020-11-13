@@ -10,7 +10,7 @@ library(lubridate)
 devtools::load_all("../evalforecast")
 
 # read in all the score cards:
-scorecard_meta <- locate_cards("../../covid-19-iif-blog-post-data/smallcards/ensemble/historical_cdc_components_inconly")
+scorecard_meta <- locate_cards("../../covid-19-iif-blog-post-data/smallcards/historical_cdc_components_inconly")
 scorecards_raw <- scorecard_meta$filename %>% map(readRDS)
 scorecards_combined <- scorecard_meta %>% mutate(scorecard = scorecards_raw)
 # combine all the forecast dates for each (forecaster, forecast task) pair:
