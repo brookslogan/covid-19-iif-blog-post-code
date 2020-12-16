@@ -151,6 +151,90 @@ impute_quantile_forecasts = function(qf) {
   return(result)
 }
 
+fit_quantgen_ensemble = function(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing) {
+  qf$forecasts = qf$forecasts[,,as.character(fit_taus)]
+  na_mask = apply(qf$forecasts,1,function(arr) { all(is.na(arr))}) | is.na(qf$actual)
+  qf$actual = qf$actual[!na_mask]
+  qf$forecasts = qf$forecasts[!na_mask,,]
+  if (impute_missing) {
+    qf = impute_quantile_forecasts(qf)
+  }
+  na_preds = apply(qf$forecasts,1,function(arr) { any(is.na(arr))})
+  st_obj = quantile_ensemble(qf$forecasts[!na_preds,,], qf$actual[!na_preds], fit_taus, tau_groups = tau_groups, noncross = FALSE, lp_solver = "gurobi",
+                             intercept = intercept, unit_sum = unit_sum, verbose=FALSE)
+  orig_weights = st_obj[["alpha"]]
+  ## Adjust weights based on number of missing forecasts for each forecaster
+  if (impute_missing) {
+    ## Calculate weights for each training example
+    new_weights = array(0,dim=dim(qf$forecasts))
+    for (i in 1:dim(qf$forecasts)[1]) {
+      ## Initialize weights for training example to be the fitted weights
+      if (length(unique(tau_groups)) == 1) {
+        for (k in 1:length(fit_taus)) {
+          new_weights[i,,k] = st_obj$alpha
+        }
+      } else {
+        new_weights[i,,] = st_obj$alpha
+      }
+      
+      missing_forecasters = qf$missing_arr[i,]
+      if (sum(missing_forecasters) > 0) {
+        ## For missing forecasters, set weight to 0
+        new_weights[i,missing_forecasters,] = 0
+        ## For non-missing forecasters, equally distribute weight of missing forecasters
+        if (length(unique(tau_groups)) == 1) {
+          missing_weight = sum(st_obj$alpha[missing_forecasters]) / sum(!missing_forecasters)
+        } else {
+          missing_weight = apply(st_obj$alpha[missing_forecasters,,drop=FALSE],2,sum) / sum(!missing_forecasters)
+        }
+        for (j in which(!missing_forecasters)) {
+          new_weights[i,j,] = new_weights[i,j,] + missing_weight
+        }
+      }
+    }
+    
+    ## Take mean of new weights across all training examples
+    if (length(unique(tau_groups)) == 1) {
+      new_weights = apply(new_weights,2,mean)
+    } else {
+      new_weights = apply(new_weights,2:3,mean)
+    }
+    st_obj$alpha = new_weights
+  }
+  return (list(
+    st_obj=st_obj,
+    weights=st_obj[["alpha"]],
+    forecasters=forecasters,
+    orig_weights=orig_weights
+  ))
+}
+
+fit_screened_quantgen_ensemble = function(max_n_systems) function(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing) {
+  .GlobalEnv[["debug.screening.env"]] <- environment()
+  full_fit = fit_quantgen_ensemble(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing)
+  screened_forecasters = full_fit[["forecasters"]][head(order(-rowSums(as.matrix(full_fit[["weights"]]))), max_n_systems)]
+  ## screened_forecasters = full_fit[["forecasters"]][rank(-full_fit[["weights"]]) >= min_negwt_rank]
+  screened_qf = qf
+  screened_qf[["forecasts"]] <- screened_qf[["forecasts"]][,screened_forecasters,,drop=FALSE]
+  screened_fit = fit_quantgen_ensemble(screened_qf, screened_forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing)
+  weights = stats::setNames(rep(0, length(forecasters)), forecasters)
+  weights[screened_forecasters] <- screened_fit[["weights"]]
+  weights <- unname(weights)
+  st_obj = full_fit[["st_obj"]]
+  st_obj[["alpha"]] <- weights
+  return (list(
+    st_obj=st_obj,
+    weights=weights,
+    forecasters=forecasters,
+    screened_weights=screened_fit[["weights"]],
+    screened_orig_weights=screened_fit[["orig_weights"]],
+    screened_forecasters=screened_forecasters,
+    full_weights=full_fit[["weights"]],
+    full_orig_weights=full_fit[["orig_weights"]],
+    full_forecasters = forecasters
+  ))
+}
+
 #' @param training_locations_considered \code{NULL} or character vector; if
 #'   \code{NULL}, does nothing; if a character vector, limits training to
 #'   locations in this vector
@@ -172,7 +256,8 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                                             unit_sum = TRUE,
                                             intercept = FALSE,
                                             cheating_fit_on_test_date_instead = FALSE,
-                                            debug_weights_folder = NULL) {
+                                            debug_weights_folder = NULL,
+                                            fitter = fit_quantgen_ensemble) {
     my_forecaster = function(df, forecast_date, observations_tbl=NULL) {
         print(ahead)
         print(forecast_date)
@@ -208,55 +293,7 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                                        n_locations=n_locations, response=response, repo_root_dirpath=repo_root_dirpath,
                                        locations_considered=training_locations_considered)
               }
-            qf$forecasts = qf$forecasts[,,as.character(fit_taus)]
-            na_mask = apply(qf$forecasts,1,function(arr) { all(is.na(arr))}) | is.na(qf$actual)
-            qf$actual = qf$actual[!na_mask]
-            qf$forecasts = qf$forecasts[!na_mask,,]
-            if (impute_missing) {
-              qf = impute_quantile_forecasts(qf)
-            }
-            na_preds = apply(qf$forecasts,1,function(arr) { any(is.na(arr))})
-            st_obj = quantile_ensemble(qf$forecasts[!na_preds,,], qf$actual[!na_preds], fit_taus, tau_groups = tau_groups, noncross = FALSE, lp_solver = "gurobi",
-                                       intercept = intercept, unit_sum = unit_sum, verbose=FALSE)
-            orig_weights = st_obj[["alpha"]]
-            ## Adjust weights based on number of missing forecasts for each forecaster
-            if (impute_missing) {
-              ## Calculate weights for each training example
-              new_weights = array(0,dim=dim(qf$forecasts))
-              for (i in 1:dim(qf$forecasts)[1]) {
-                ## Initialize weights for training example to be the fitted weights
-                if (length(unique(tau_groups)) == 1) {
-                  for (k in 1:length(fit_taus)) {
-                    new_weights[i,,k] = st_obj$alpha
-                  }
-                } else {
-                  new_weights[i,,] = st_obj$alpha
-                }
-                
-                missing_forecasters = qf$missing_arr[i,]
-                if (sum(missing_forecasters) > 0) {
-                  ## For missing forecasters, set weight to 0
-                  new_weights[i,missing_forecasters,] = 0
-                  ## For non-missing forecasters, equally distribute weight of missing forecasters
-                  if (length(unique(tau_groups)) == 1) {
-                    missing_weight = sum(st_obj$alpha[missing_forecasters]) / sum(!missing_forecasters)
-                  } else {
-                    missing_weight = apply(st_obj$alpha[missing_forecasters,,drop=FALSE],2,sum) / sum(!missing_forecasters)
-                  }
-                  for (j in which(!missing_forecasters)) {
-                    new_weights[i,j,] = new_weights[i,j,] + missing_weight
-                  }
-                }
-              }
-              
-              ## Take mean of new weights across all training examples
-              if (length(unique(tau_groups)) == 1) {
-                new_weights = apply(new_weights,2,mean)
-              } else {
-                new_weights = apply(new_weights,2:3,mean)
-              }
-              st_obj$alpha = new_weights
-            }
+            fit = fitter(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing)
             success = 0
         },error = function(c) {
             print(c$message)
@@ -274,14 +311,10 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
           if (!dir.exists(dirname(debug_weights_file))) {
             dir.create(dirname(debug_weights_file), recursive=TRUE)
           }
-          saveRDS(list(
-            weights=st_obj[["alpha"]],
-            orig_weights=orig_weights,
-            forecasters=forecasters
-          ), debug_weights_file)
+          saveRDS(fit[names(fit) != "st_obj"], debug_weights_file)
         }
 
-        ensemble_forecasts = predict(st_obj,component_forecasts$forecasts[,,as.character(fit_taus)])
+        ensemble_forecasts = predict(fit[["st_obj"]],component_forecasts$forecasts[,,as.character(fit_taus)])
         
         full_ensemble_forecasts = array(NA,dim=c(dim(ensemble_forecasts)[1],length(cdc_probs)))
         if (length(fit_taus) != length(cdc_probs)) {

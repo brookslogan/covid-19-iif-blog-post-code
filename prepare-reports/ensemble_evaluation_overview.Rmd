@@ -5,6 +5,8 @@ date: "8/2/2020"
 output: html_document
 params:
     forecaster_names: "COVIDhub-ensemble;COVIDhub-baseline"
+    forecaster_colors: "DEFAULT"
+    forecaster_labels: "DEFAULT"
     response:       "jhu-csse_deaths_incidence_num"
     eval_aheads:    "1;2;3;4"
     eval_locations: "ALL"
@@ -36,7 +38,7 @@ library(ordinal) # must load before lme4 for lme4 implementations to survive
 library(lme4)
 library(effects)
 source("prob_forecast_evaluation_coverage.R")
-## Load scorecards, configure settings:
+#### Load scorecards, configure settings:
 ensemble_scorecard_meta <-
   locate_cards("../../covid-19-iif-blog-post-data/largecards/ensembles",
                                         dir_order = c("ahead",
@@ -46,6 +48,26 @@ ensemble_scorecard_meta <-
                                                       "n_locations",
                                                       "forecaster")) %>%
     dplyr::filter(forecaster %in% forecaster_names)
+additional_ensemble_scorecard_dirs = c(
+  "subset_ensembles/4/1",
+  "cheating_subset_ensembles/4",
+  "cheating_subset_ensembles/8",
+  "cheating_subset_ensembles/16",
+  "oos_subset_ensembles/4",
+  "oos_subset_ensembles/8",
+  "oos_subset_ensembles/16"
+)
+additional_ensemble_scorecard_meta <-
+  additional_ensemble_scorecard_dirs %>%
+  lapply(function(dirstem) {
+    dirpath = file.path("../../covid-19-iif-blog-post-data/largecards", dirstem)
+    prefix = paste0(sub("_ensembles", "", dirstem),"/")
+    meta = locate_cards(dirpath, dir_order = c("ahead", "response", "geo_type", "incidence_period", "n_locations", "forecaster")) %>%
+      dplyr::mutate(forecaster = paste0(prefix,forecaster))
+    meta %>%
+      dplyr::filter(forecaster %in% forecaster_names)
+  }) %>%
+  dplyr::bind_rows()
 scorecard_meta <- locate_cards("../../covid-19-iif-blog-post-data/largecards/components_inconly",
                                dir_order = c("ahead",
                                              "response",
@@ -56,102 +78,125 @@ scorecard_meta <- locate_cards("../../covid-19-iif-blog-post-data/largecards/com
     dplyr::filter(forecaster %in% forecaster_names) %>%
     dplyr::anti_join(ensemble_scorecard_meta[c("ahead","response","geo_type","incidence_period","n_locations","forecaster")],
                      by=c("ahead","response","geo_type","incidence_period","n_locations","forecaster"))
-forecaster.colors = c(
-  "COVIDhub-baseline"             = "#003300",
-  "COVIDhub-ensemble"             = "#336633",
-  "hayman_ens_v1_selhub8"         = "#888888",
-  ## "qspace_ew_md_ens_v1_inconly"   = "#88AA44",
-  "qspace_ew_md_ens_v1_inconly"   = "#0571b0",
-  "qspace_ew_md_ens_v1_all"       = "#88AA44",
-  "qspace_ew_md_ens_v1_selhub8"   = "#88EE44",
-  ## "qspace_ew_mean_ens_v1_inconly" = "#88AAAA",
-  ## "qspace_ew_mean_ens_v1_inconly" = "#0022AA",
-  "qspace_ew_mean_ens_v1_inconly" = "#92c5de",
-  "qspace_ew_mean_ens_v1_all"     = "#88AAAA",
-  "qspace_ew_mean_ens_v1_selhub8" = "#88EEAA",
-  "ensemble1_cdc_dup"             = "#444444",
-  "ensemble3_cdc_dup"             = "#999944",
-  "ensemble23_cdc_dup"            = "#EEEE44",
-  "ensemble1_cdc_impute"          = "#004444",
-  "ensemble3_cdc_impute"          = "#009944",
-  "ensemble23_cdc_impute"         = "#00EE44",
-  "ensemble3train_cdc_impute"     = "#009999",
-  "ensemble3_comb4_impute"        = "#449944",
-  "ensemble1_cdc_all_dup"         = "#AA00AA",
-  "ensemble3_cdc_all_dup"         = "#CC00AA",
-  "ensemble23_cdc_all_dup"        = "#FF00AA",
-  "ensemble3train_cdc_all_dup"    = "#FF00FF",
-  "ensemble1_cdc_all_dup_re"      = "#AA00AA",
-  "ensemble3_cdc_all_dup_re"      = "#CC00AA",
-  "ensemble23_cdc_all_dup_re"     = "#FF00AA",
-  "ensemble3train_cdc_all_dup_re" = "#FF00FF",
-  "ensemble1_cdc_inconly"         = "#AA0066",
-  ## "ensemble3_cdc_inconly"         = "#CC0066",
-  "ensemble3_cdc_inconly"         = "#ca0020",
-  "ensemble23_cdc_inconly"        = "#FF0066",
-  "ensemble3train_cdc_inconly"    = "#FF44FF",
-  "ensemble3_cdc_inconly_testdate"         = "#FF4400",
-  "cdf_raw_ens_v0_selhub8"        = "#440000",
-  "cdf_rwt2_ens_v0_selhub8"       = "#770000",
-  "cdf_rwt2_ens_v0_selhub8_v1pre" = "#990000",
-  "cdf_rwt2_ens_v0_selhub8_v1"    = "#CC0000",
-  "cdf_rwt2imp_ens_v0_selhub8"    = "#FF0000",
-  ## "YYG-ParamSearch"               = "#000055",
-  ## "YYG-ParamSearch"               = "#0022AA",
-  ## "YYG-ParamSearch"               = "#88AAAA",
-  ## "YYG-ParamSearch"               = "#f7f7f7",
-  ## "YYG-ParamSearch"               = "#ffffbf",
-  "YYG-ParamSearch"               = "#fdae61",
-  ## "UMass-MechBayes"               = "#006644",
-  ## "UMass-MechBayes"               = "#f4a582",
-  "UMass-MechBayes"               = "#abdda4",
-  "Covid19Sim-Simulator"          = "#0000AA"
-)
-forecaster.labels = c(
-  ## "COVIDhub-baseline"             = "CHbase",
-  "COVIDhub-baseline"             = "Baseline forecaster",
-  "COVIDhub-ensemble"             = "CHens",
-  "hayman_ens_v1_selhub8"         = "hay_v1",
-  ## "qspace_ew_md_ens_v1_inconly"   = "QEWMD_allinc",
-  "qspace_ew_md_ens_v1_inconly"   = "QuantMedian",
-  "qspace_ew_md_ens_v1_all"       = "QEWMD_allwide",
-  "qspace_ew_md_ens_v1_selhub8"   = "QEWMD",
-  ## "qspace_ew_mean_ens_v1_inconly" = "QEWAM_allinc",
-  "qspace_ew_mean_ens_v1_inconly" = "QuantMean",
-  "qspace_ew_mean_ens_v1_all"     = "QEWAM_allwide",
-  "qspace_ew_mean_ens_v1_selhub8" = "QEWAM",
-  "ensemble1_cdc_dup"             = "QG1",
-  "ensemble3_cdc_dup"             = "QG3",
-  "ensemble23_cdc_dup"            = "QG23",
-  "ensemble1_cdc_impute"          = "QG1_imp",
-  "ensemble3_cdc_impute"          = "QG3_imp",
-  "ensemble23_cdc_impute"         = "QG23_imp",
-  "ensemble3train_cdc_impute"     = "QG3only_imp",
-  "ensemble3_comb4_impute"        = "QG3_comb4_imp",
-  "ensemble1_cdc_all_dup"         = "QG1_allwide_imp",
-  "ensemble3_cdc_all_dup"         = "QG3_allwide_imp",
-  "ensemble23_cdc_all_dup"        = "QG23_allwide_imp",
-  "ensemble3train_cdc_all_dup"    = "QG3only_allwide_imp",
-  "ensemble1_cdc_all_dup_re"      = "QG1_allwide_imp",
-  "ensemble3_cdc_all_dup_re"      = "QG3_allwide_imp",
-  "ensemble23_cdc_all_dup_re"     = "QG23_allwide_imp",
-  "ensemble3train_cdc_all_dup_re" = "QG3only_allwide_imp",
-  "ensemble1_cdc_inconly"         = "QG1_allinc_imp",
-  ## "ensemble3_cdc_inconly"         = "QG3_allinc_imp",
-  "ensemble3_cdc_inconly"         = "QuantTrained",
-  "ensemble23_cdc_inconly"        = "QG23_allinc_imp",
-  "ensemble3train_cdc_inconly"    = "QG3only_allinc_imp",
-  "ensemble3_cdc_inconly_testdate"         = "QG3_allinc_imp_testdate",
-  "cdf_raw_ens_v0_selhub8"        = "CDF_v0.0",
-  "cdf_rwt2_ens_v0_selhub8"       = "CDF_v0.2",
-  "cdf_rwt2_ens_v0_selhub8_v1pre" = "CDF_v1.2.0",
-  "cdf_rwt2_ens_v0_selhub8_v1"    = "CDF_v1.2.1",
-  "cdf_rwt2imp_ens_v0_selhub8"    = "CDF_v1.2.1_imp",
-  ## "YYG-ParamSearch"               = "Highly ranked component A",
-  ## "UMass-MechBayes"               = "Highly ranked component B"
-  "YYG-ParamSearch"               = "Top forecaster A",
-  "UMass-MechBayes"               = "Top forecaster B"
-)
+
+forecaster.colors = if (!identical(params[["forecaster_colors"]], "DEFAULT")) {
+  stats::setNames(strsplit(params[["forecaster_colors"]],";")[[1L]], forecaster_names)
+} else {
+  c(
+    "COVIDhub-baseline"             = "#003300",
+    "COVIDhub-ensemble"             = "#336633",
+    "hayman_ens_v1_selhub8"         = "#888888",
+    ## "qspace_ew_md_ens_v1_inconly"   = "#88AA44",
+    "qspace_ew_md_ens_v1_inconly"   = "#0571b0",
+    "qspace_ew_md_ens_v1_all"       = "#88AA44",
+    "qspace_ew_md_ens_v1_selhub8"   = "#88EE44",
+    ## "qspace_ew_mean_ens_v1_inconly" = "#88AAAA",
+    ## "qspace_ew_mean_ens_v1_inconly" = "#0022AA",
+    "qspace_ew_mean_ens_v1_inconly" = "#92c5de",
+    "qspace_ew_mean_ens_v1_all"     = "#88AAAA",
+    "qspace_ew_mean_ens_v1_selhub8" = "#88EEAA",
+    "ensemble1_cdc_dup"             = "#444444",
+    "ensemble3_cdc_dup"             = "#999944",
+    "ensemble23_cdc_dup"            = "#EEEE44",
+    "ensemble1_cdc_impute"          = "#004444",
+    "ensemble3_cdc_impute"          = "#009944",
+    "ensemble23_cdc_impute"         = "#00EE44",
+    "ensemble3train_cdc_impute"     = "#009999",
+    "ensemble3_comb4_impute"        = "#449944",
+    "ensemble1_cdc_all_dup"         = "#AA00AA",
+    "ensemble3_cdc_all_dup"         = "#CC00AA",
+    "ensemble23_cdc_all_dup"        = "#FF00AA",
+    "ensemble3train_cdc_all_dup"    = "#FF00FF",
+    "ensemble1_cdc_all_dup_re"      = "#AA00AA",
+    "ensemble3_cdc_all_dup_re"      = "#CC00AA",
+    "ensemble23_cdc_all_dup_re"     = "#FF00AA",
+    "ensemble3train_cdc_all_dup_re" = "#FF00FF",
+    "ensemble1_cdc_inconly"         = "#AA0066",
+    ## "ensemble3_cdc_inconly"         = "#CC0066",
+    "ensemble3_cdc_inconly"         = "#ca0020",
+    "ensemble3_cdc_inconly_screen12"= "#41b6c4",
+    "ensemble3_cdc_inconly_screen8" = "#2c7fb8",
+    "ensemble3_cdc_inconly_screen4" = "#253494",
+    "cheating_subset/16/ensemble3_cdc_inconly"= "#41b6c4",
+    "cheating_subset/8/ensemble3_cdc_inconly" = "#2c7fb8",
+    "cheating_subset/4/ensemble3_cdc_inconly" = "#253494",
+    "cheating_subset/4/qspace_ew_md_ens_v1_inconly" = "#41b6c4",
+    "cheating_subset/4/qspace_ew_mean_ens_v1_inconly" = "#2c7fb8",
+    "cheating_subset/8/qspace_ew_md_ens_v1_inconly" = "#41b6c4",
+    "cheating_subset/8/qspace_ew_mean_ens_v1_inconly" = "#253494",
+    "subset/4/1/ensemble3_cdc_inconly" = "#253494",
+    "subset/4/1/qspace_ew_md_ens_v1_inconly" = "#41b6c4",
+    "subset/4/1/qspace_ew_mean_ens_v1_inconly" = "#2c7fb8",
+    "ensemble23_cdc_inconly"        = "#FF0066",
+    "ensemble3train_cdc_inconly"    = "#FF44FF",
+    "ensemble3_cdc_inconly_testdate"         = "#FF4400",
+    "cdf_raw_ens_v0_selhub8"        = "#440000",
+    "cdf_rwt2_ens_v0_selhub8"       = "#770000",
+    "cdf_rwt2_ens_v0_selhub8_v1pre" = "#990000",
+    "cdf_rwt2_ens_v0_selhub8_v1"    = "#CC0000",
+    "cdf_rwt2imp_ens_v0_selhub8"    = "#FF0000",
+    ## "YYG-ParamSearch"               = "#000055",
+    ## "YYG-ParamSearch"               = "#0022AA",
+    ## "YYG-ParamSearch"               = "#88AAAA",
+    ## "YYG-ParamSearch"               = "#f7f7f7",
+    ## "YYG-ParamSearch"               = "#ffffbf",
+    "YYG-ParamSearch"               = "#fdae61",
+    ## "UMass-MechBayes"               = "#006644",
+    ## "UMass-MechBayes"               = "#f4a582",
+    "UMass-MechBayes"               = "#abdda4",
+    "Covid19Sim-Simulator"          = "#0000AA"
+  )
+}
+
+forecaster.labels = if (!identical(params[["forecaster_labels"]], "DEFAULT")) {
+  stats::setNames(strsplit(params[["forecaster_labels"]],";")[[1L]], forecaster_names)
+} else {
+  c(
+    ## "COVIDhub-baseline"             = "CHbase",
+    "COVIDhub-baseline"             = "Baseline forecaster",
+    "COVIDhub-ensemble"             = "CHens",
+    "hayman_ens_v1_selhub8"         = "hay_v1",
+    ## "qspace_ew_md_ens_v1_inconly"   = "QEWMD_allinc",
+    "qspace_ew_md_ens_v1_inconly"   = "QuantMedian",
+    "qspace_ew_md_ens_v1_all"       = "QEWMD_allwide",
+    "qspace_ew_md_ens_v1_selhub8"   = "QEWMD",
+    ## "qspace_ew_mean_ens_v1_inconly" = "QEWAM_allinc",
+    "qspace_ew_mean_ens_v1_inconly" = "QuantMean",
+    "qspace_ew_mean_ens_v1_all"     = "QEWAM_allwide",
+    "qspace_ew_mean_ens_v1_selhub8" = "QEWAM",
+    "ensemble1_cdc_dup"             = "QG1",
+    "ensemble3_cdc_dup"             = "QG3",
+    "ensemble23_cdc_dup"            = "QG23",
+    "ensemble1_cdc_impute"          = "QG1_imp",
+    "ensemble3_cdc_impute"          = "QG3_imp",
+    "ensemble23_cdc_impute"         = "QG23_imp",
+    "ensemble3train_cdc_impute"     = "QG3only_imp",
+    "ensemble3_comb4_impute"        = "QG3_comb4_imp",
+    "ensemble1_cdc_all_dup"         = "QG1_allwide_imp",
+    "ensemble3_cdc_all_dup"         = "QG3_allwide_imp",
+    "ensemble23_cdc_all_dup"        = "QG23_allwide_imp",
+    "ensemble3train_cdc_all_dup"    = "QG3only_allwide_imp",
+    "ensemble1_cdc_all_dup_re"      = "QG1_allwide_imp",
+    "ensemble3_cdc_all_dup_re"      = "QG3_allwide_imp",
+    "ensemble23_cdc_all_dup_re"     = "QG23_allwide_imp",
+    "ensemble3train_cdc_all_dup_re" = "QG3only_allwide_imp",
+    "ensemble1_cdc_inconly"         = "QG1_allinc_imp",
+    ## "ensemble3_cdc_inconly"         = "QG3_allinc_imp",
+    "ensemble3_cdc_inconly"         = "QuantTrained",
+    "ensemble23_cdc_inconly"        = "QG23_allinc_imp",
+    "ensemble3train_cdc_inconly"    = "QG3only_allinc_imp",
+    "ensemble3_cdc_inconly_testdate"         = "QG3_allinc_imp_testdate",
+    "cdf_raw_ens_v0_selhub8"        = "CDF_v0.0",
+    "cdf_rwt2_ens_v0_selhub8"       = "CDF_v0.2",
+    "cdf_rwt2_ens_v0_selhub8_v1pre" = "CDF_v1.2.0",
+    "cdf_rwt2_ens_v0_selhub8_v1"    = "CDF_v1.2.1",
+    "cdf_rwt2imp_ens_v0_selhub8"    = "CDF_v1.2.1_imp",
+    ## "YYG-ParamSearch"               = "Highly ranked component A",
+    ## "UMass-MechBayes"               = "Highly ranked component B"
+    "YYG-ParamSearch"               = "Top forecaster A",
+    "UMass-MechBayes"               = "Top forecaster B"
+  )
+}
 
 ## data.env = readRDS("../../../covidcast-forecast-scratch/trimmed-07-27/trimmed-data-env-08-16.rds")
 ## original.df = data.env[["data_list"]][["state"]]
@@ -181,7 +226,7 @@ median_k = 12L
 validation_window_length = 4L # see below if this is actually used and how
 
 all_scorecards =
-    dplyr::bind_rows(scorecard_meta, ensemble_scorecard_meta) %>%
+    dplyr::bind_rows(scorecard_meta, ensemble_scorecard_meta, additional_ensemble_scorecard_meta) %>%
     tidyr::pivot_wider(id_cols=c(ahead,response,geo_type,incidence_period,n_locations), names_from="forecaster", values_from="filename") %>%
     na.omit() %>%
     tidyr::pivot_longer(-c(ahead,response,geo_type,incidence_period,n_locations), names_to="forecaster", values_to="filename") %>%

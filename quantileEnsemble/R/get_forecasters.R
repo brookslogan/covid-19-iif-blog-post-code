@@ -90,12 +90,14 @@ get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahea
     )
     quantgen_cdc_forecasters = c("COVIDhub-baseline", "IHME-CurveFit", "LANL-GrowthRate", "MOBS-GLEAM_COVID", "OliverWyman-Navigator", "UMass-MechBayes", "UT-Mobility", "YYG-ParamSearch")
     all_forecasters = get_hub_components_names(repo_root_dirpath)
+    all_forecasters <- setdiff(all_forecasters, "COVIDhub-ensemble")
     all_forecasters2 = setdiff(all_forecasters,
                                ## hack to remove things that have been renamed causing issues with hayman:
                                c("MOBS_NEU-GLEAM_COVID","MIT_CovidAnalytics-DELPHI","UChicago-CovidIL_10_increase","UChicago-CovidIL_30_increase","MIT_CovAlliance-SIR")
                                )
     inconly_components_dirpath = file.path(repo_root_dirpath, "smallcards", "historical_cdc_components_inconly")
     inconly_forecasters = get_hub_components_names_helper(inconly_components_dirpath)
+    inconly_forecasters <- setdiff(inconly_forecasters, "COVIDhub-ensemble")
     comb4 = c("aardvark_cookies_and_cream","poiszero","zyzzyva_covidcast")
     fit_taus = cdc_probs
     fit_taus3 = c(0.2,0.5,0.8)

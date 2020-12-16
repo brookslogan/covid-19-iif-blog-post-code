@@ -15,7 +15,7 @@ Authors@R:
              role = c("aut"),
              email = "jbien@usc.edu"))
 Description: The quantileEnsemble forecaster.
-License: check what license we can use
+License: MIT + file LICENSE
 Encoding: UTF-8
 Imports: pipeR, data.table, tibble, fs, dplyr, tibble, quantgen, quadprog, stringi
 Suggests: testthat

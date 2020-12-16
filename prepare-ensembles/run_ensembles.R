@@ -6,8 +6,17 @@ devtools::load_all("../evalforecast")
 devtools::load_all("../lemur")
 devtools::load_all("../../../covidData")
 
+analysis_date = as.Date("2020-12-07")
+
 data_list = list(
-  state = readRDS("../../covid-19-iif-blog-post-data/signals/upstream_df_state_2020-10-11_final_corrected_trimmed.RDS")
+  state = covidData::load_jhu_data(analysis_date) %>%
+    dplyr::left_join(covidData::fips_codes[c("location","abbreviation")], by="location") %>%
+    dplyr::transmute(location,
+                     location_name=abbreviation,
+                     reference_date=date,
+                     issue_date=as.Date(NA),
+                     variable_name="jhu-csse_deaths_incidence_num",
+                     value=inc)
 )
 
 ## these variables specify the forecasting task:
@@ -30,8 +39,10 @@ for (ahead in 1:4) {
     ## ensemble_forecasters <- ensemble_forecasters[grepl("(ensemble3.*inconly)|(qspace.*inconly)|(ensemble3.*all)|(qspace.*all)", names(ensemble_forecasters))]
     ## ensemble_forecasters <- ensemble_forecasters[grepl("qspace_ew_md_ens_v1_all", names(ensemble_forecasters))]
     ## ensemble_forecasters <- ensemble_forecasters[c("ensemble1_cdc_inconly","ensemble3_cdc_inconly")]
-    ensemble_forecasters <- ensemble_forecasters[c("qspace_ew_md_ens_v1_inconly","qspace_ew_mean_ens_v1_inconly")]
-    forecast_dates = lubridate::ymd("2020-10-05") - (7L * seq.int(ahead + 1L, 25L))
+    ## ensemble_forecasters <- ensemble_forecasters[c("qspace_ew_md_ens_v1_inconly","qspace_ew_mean_ens_v1_inconly")]
+    ## ensemble_forecasters <- ensemble_forecasters[grepl("screen", names(ensemble_forecasters))]
+    ensemble_forecasters <- ensemble_forecasters[c("qspace_ew_md_ens_v1_inconly","qspace_ew_mean_ens_v1_inconly","ensemble3_cdc_inconly")]
+    forecast_dates = lubridate::ymd("2020-11-23") - (7L * seq.int(ahead + 1L, 32L))
     cat(paste0("Forecasting dates ",toString(forecast_dates), " for ahead ",ahead,"\n"))
     for (forecast_date_i in seq_along(forecast_dates)) {
       forecast_date = forecast_dates[[forecast_date_i]]

@@ -61,7 +61,9 @@ get_forecasters  <- function(response, incidence_period = c("epiweek"), ahead, f
 get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahead, forecast_date,
                                  geo_type = c("county", "state", "hrr", "msa"),
                                  n_locations = 200,
-                                 repo_root_dirpath=get_repo_root_dirpath()) {
+                                 repo_root_dirpath=get_repo_root_dirpath(),
+                                 inconly_forecasters_override=NULL,
+                                 debug_weights_folder_suffix="") {
     if (response == "usa-facts_deaths_incidence_num") {
         ## provide old name as alternative name:
         names(response) <- "usafacts_deaths_incidence_num"
@@ -90,17 +92,29 @@ get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahea
     )
     quantgen_cdc_forecasters = c("COVIDhub-baseline", "IHME-CurveFit", "LANL-GrowthRate", "MOBS-GLEAM_COVID", "OliverWyman-Navigator", "UMass-MechBayes", "UT-Mobility", "YYG-ParamSearch")
     all_forecasters = get_hub_components_names(repo_root_dirpath)
+    all_forecasters <- setdiff(all_forecasters, "COVIDhub-ensemble")
     all_forecasters2 = setdiff(all_forecasters,
                                ## hack to remove things that have been renamed causing issues with hayman:
                                c("MOBS_NEU-GLEAM_COVID","MIT_CovidAnalytics-DELPHI","UChicago-CovidIL_10_increase","UChicago-CovidIL_30_increase","MIT_CovAlliance-SIR")
                                )
     inconly_components_dirpath = file.path(repo_root_dirpath, "smallcards", "historical_cdc_components_inconly")
     inconly_forecasters = get_hub_components_names_helper(inconly_components_dirpath)
+    inconly_forecasters <- setdiff(inconly_forecasters, "COVIDhub-ensemble")
+    if (!is.null(inconly_forecasters_override)) {
+      inconly_forecasters <- inconly_forecasters_override
+    }
     comb4 = c("aardvark_cookies_and_cream","poiszero","zyzzyva_covidcast")
     fit_taus = cdc_probs
     fit_taus3 = c(0.2,0.5,0.8)
     tau_groups3 = c(rep(1, 4), rep(2, 15), rep(3, 4))
     calike_locations = strsplit("06;48;12;36;42;17;39;13;37;26;34;51;53;04;25;47;18;29;24;55", ";")[[1L]]
+    get_debug_weights_folder <- function(ensemble_name) {
+      if (is.null(debug_weights_folder_suffix)) {
+        NULL
+      } else {
+        paste0(file.path(repo_root_dirpath, "debug_quantgen_weights", "ensemble1_cdc_inconly"), debug_weights_folder_suffix)
+      }
+    }
     lapply(
         FUN=function(forecaster_fn) list(forecaster=forecaster_fn, type="ensemble"),
         list(
@@ -536,12 +550,30 @@ get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahea
                                                                  repo_root_dirpath = repo_root_dirpath,
                                                                  forecasters=inconly_forecasters, tau_groups=rep(1,23), impute_missing = TRUE,
                                                                  fit_taus = fit_taus,
-                                                                 debug_weights_folder = file.path(repo_root_dirpath, "debug_quantgen_weights", "ensemble1_cdc_inconly"))
+                                                                 debug_weights_folder = get_debug_weights_folder("ensemble1_cdc_inconly"))
        , ensemble3_cdc_inconly = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
                                                                  repo_root_dirpath = repo_root_dirpath,
                                                                  forecasters=inconly_forecasters, tau_groups=tau_groups3, impute_missing = TRUE,
                                                                  fit_taus = fit_taus,
-                                                                 debug_weights_folder = file.path(repo_root_dirpath, "debug_quantgen_weights", "ensemble3_cdc_inconly"))
+                                                                 debug_weights_folder = get_debug_weights_folder("ensemble3_cdc_inconly"))
+       , ensemble3_cdc_inconly_screen4 = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                         repo_root_dirpath = repo_root_dirpath,
+                                                                         forecasters=inconly_forecasters, tau_groups=tau_groups3, impute_missing = TRUE,
+                                                                         fit_taus = fit_taus,
+                                                                         debug_weights_folder = get_debug_weights_folder("ensemble3_cdc_inconly_screen4"),
+                                                                         fitter = fit_screened_quantgen_ensemble(4L))
+       , ensemble3_cdc_inconly_screen8 = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                         repo_root_dirpath = repo_root_dirpath,
+                                                                         forecasters=inconly_forecasters, tau_groups=tau_groups3, impute_missing = TRUE,
+                                                                         fit_taus = fit_taus,
+                                                                         debug_weights_folder = get_debug_weights_folder("ensemble3_cdc_inconly_screen8"),
+                                                                         fitter = fit_screened_quantgen_ensemble(8L))
+       , ensemble3_cdc_inconly_screen12 = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                         repo_root_dirpath = repo_root_dirpath,
+                                                                         forecasters=inconly_forecasters, tau_groups=tau_groups3, impute_missing = TRUE,
+                                                                         fit_taus = fit_taus,
+                                                                         debug_weights_folder = get_debug_weights_folder("ensemble3_cdc_inconly_screen12"),
+                                                                         fitter = fit_screened_quantgen_ensemble(12L))
        , ensemble23_cdc_inconly = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
                                                                   repo_root_dirpath = repo_root_dirpath,
                                                                   forecasters=inconly_forecasters, tau_groups=seq_len(23L), impute_missing = TRUE,
