@@ -10,7 +10,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_nodrop2_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_nodrop2_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_nodrop2.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -20,8 +20,12 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "2",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainqspace_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainqspace_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainqspace.html")
                   )
+saveRDS(
+  list(sc_df = sc_df),
+  sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainqspace_dat.RDS")
+)
 
 sc_df %>% group_by(ahead,response,geo_type,incidence_period,n_locations,forecast_date,location) %>% summarize(abs_diff_err=abs(err[[which(forecaster=="ensemble3_cdc_inconly")]] - err[[which(forecaster=="qspace_ew_md_ens_v1_inconly")]]), .groups="drop_last") %>% group_by(ahead,response,geo_type,incidence_period,n_locations,forecast_date) %>% summarize(max_var_prop = max(abs_diff_err)/sum(abs_diff_err), .groups="drop_last") %>% group_by(ahead,response,geo_type,incidence_period,n_locations) %>% summarize(mean_max_var_prop = mean(max_var_prop), .groups="drop_last")
 
@@ -34,7 +38,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "3",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_misc1_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_misc1_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_misc1.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -44,7 +48,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "3",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_misc2_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_misc2_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_misc2.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -58,7 +62,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "1",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainensncomps_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainensncomps_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mainensncomps.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -68,7 +72,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "2",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_screening3group_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_screening3group_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_screening3group.html")
                   )
 
 
@@ -82,7 +86,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsrandsubset4draw1_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsrandsubset4draw1_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsrandsubset4draw1.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -92,7 +96,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsretrosubset4_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsretrosubset4_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsretrosubset4.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -102,7 +106,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsretrosubset8_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsretrosubset8_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_vsretrosubset8.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -114,7 +118,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_qgretrosubset_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_qgretrosubset_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_qgretrosubset.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -126,7 +130,7 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mdretrosubset_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mdretrosubset_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mdretrosubset.html")
                   )
 
 rmarkdown::render("ensemble_evaluation_overview.Rmd",
@@ -138,6 +142,6 @@ rmarkdown::render("ensemble_evaluation_overview.Rmd",
                     dropfirst = "0",
                     plot_prefix = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mdsubset8_")
                   ),
-                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mdsubset8_ahead.html")
+                  output_file = sprintf("../../covid-19-iif-blog-post-data/reports/evaluation-overviews/eval_overview_mdsubset8.html")
                   )
 
