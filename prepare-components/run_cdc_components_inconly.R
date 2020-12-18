@@ -75,16 +75,18 @@ logger::log_info("Producing scorecards")
 for (config_row_i in seq_len(nrow(config_tbl))) {
   geo_type = config_tbl[[config_row_i, "geo_type"]]
   response = config_tbl[[config_row_i, "response"]]
-  for (ahead in 1:4) {
-    logger::log_info("Making scorecards")
-    folders = Sys.glob(fs::path(output_path_1,forecast_date, ahead, response, geo_type, incidence_period, n_locations,"*"))
-    for (f in folders) {
-      print(f)
-      try({
-        prediction_card = readRDS(fs::path(f,"out.RDS"))
-        scorecard = evalforecast::evaluate_quantile_predictions_cards(data_list[[geo_type]],list(prediction_card))
-        saveRDS(scorecard, file = fs::path(f, "scorecard.RDS"))
-      })
+  for (ahead in aheads) {
+    for (forecast_date in forecast_dates) {
+      logger::log_info("Making scorecards")
+      folders = Sys.glob(fs::path(output_path_1, forecast_date, ahead, response, geo_type, incidence_period, n_locations,"*"))
+      for (f in folders) {
+        print(f)
+        try({
+          prediction_card = readRDS(fs::path(f,"out.RDS"))
+          scorecard = evalforecast::evaluate_quantile_predictions_cards(data_list[[geo_type]],list(prediction_card))
+          saveRDS(scorecard, file = fs::path(f, "scorecard.RDS"))
+        })
+      }
     }
   }
 }
