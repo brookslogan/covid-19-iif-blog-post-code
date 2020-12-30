@@ -27,11 +27,11 @@ get_quantile_forecasts <- function(train_dates,
                                    n_locations = 200,
                                    response = "usafacts_deaths_incidence_num",
                                    repo_root_dirpath=get_repo_root_dirpath(),
-                                   locations_considered = NULL) {
+                                   locations_considered = NULL,
+                                   hub_components_dirpath=get_hub_components_dirpath(repo_root_dirpath)) {
   .GlobalEnv[["debug.gqf.env"]] <- environment()
   historical_components_dirpath = get_historical_components_dirpath(repo_root_dirpath)
   prospective_components_dirpath = get_prospective_components_dirpath(repo_root_dirpath)
-  hub_components_dirpath = get_hub_components_dirpath(repo_root_dirpath)
   forecaster_quantiles = array(NA,dim=c(0,length(forecasters),length(cdc_probs)))
   actual_values = c()
   datelocs = c()
@@ -257,29 +257,36 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                                             intercept = FALSE,
                                             cheating_fit_on_test_date_instead = FALSE,
                                             debug_weights_folder = NULL,
-                                            fitter = fit_quantgen_ensemble) {
+                                            fitter = fit_quantgen_ensemble,
+                                            hub_components_dirpath=get_hub_components_dirpath(repo_root_dirpath),
+                                            mask_criterion = c("nonmissing_training_50states", "not_all_testing_missing")) {
+    mask_criterion <- match.arg(mask_criterion)
     my_forecaster = function(df, forecast_date, observations_tbl=NULL) {
         print(ahead)
         print(forecast_date)
+        .GlobalEnv[["debug.qgef.env"]] <- environment()
 
         ## To determine train_dates, we use ahead to avoid relying on information not available at forecast_date
-        train_dates = as.character(forecast_date - 7*seq(ahead,ahead + (n_traindays-1)))
-        
+        train_dates = as.character(forecast_date - 7*seq(ahead, ahead + (n_traindays-1)))
+
         component_forecasts = get_quantile_forecasts(as.character(forecast_date), forecasters, observations_tbl, ahead=ahead, geo_type=geo_type, incidence_period=incidence_period,
-                                                     n_locations=n_locations,response=response,repo_root_dirpath=repo_root_dirpath)
+                                                     n_locations=n_locations,response=response, repo_root_dirpath=repo_root_dirpath, hub_components_dirpath=hub_components_dirpath)
         if (dim(component_forecasts$forecasts)[1] == 0) {
           print(paste0("Could not load any component forecasts for forecast date ",forecast_date, " and ahead ",ahead,", returning empty tibble"))
           return(tibble(location=character(),probs=numeric(),quantiles=numeric()))
         }
-        
-        ## Ignore all forecasters that are completely absent from training data
-        #mask = apply(component_forecasts$forecasts,2,function(x) { !all(is.na(x))})
-        ## Ingore all forecasters that have any NA predictions for the 50 US states
+
         component_locations = sapply(strsplit(dimnames(component_forecasts$forecasts)[[1]],";"), "[[", 2)
-        component_states = which(as.numeric(component_locations) < 60 & as.numeric(component_locations) != 11)
-        mask = apply(component_forecasts$forecasts[component_states,,],2,function(x) { !any(is.na(x))})
+        component_locations_indices_in_50states = which(as.numeric(component_locations) < 60 & as.numeric(component_locations) != 11)
+        mask =
+          switch(mask_criterion,
+                 ## Ignore all forecasters that have any NA predictions for the 50 US states
+                 "nonmissing_training_50states" = apply(component_forecasts$forecasts[component_locations_indices_in_50states,,],2,function(x) { !any(is.na(x))}),
+                 ## Ignore all forecasters that are completely absent from testing data
+                 "not_all_testing_missing" = apply(component_forecasts$forecasts, 2L, function(x) { !all(is.na(x)) }))
+
         if (any(!mask)) {
-          warning(paste0("Some component forecasters are unavailable for forecast date ",forecast_date))
+          warning(paste0("Some component forecasters are masked out for forecast date ", forecast_date))
         }
         forecasters = forecasters[mask]
         component_forecasts$forecasts = component_forecasts$forecasts[,mask,]
@@ -290,7 +297,7 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                 stop ('cheating_fit_on_test_date_instead not supported')
               } else {
                 get_quantile_forecasts(train_dates, forecasters, observations_tbl, ahead=ahead, geo_type=geo_type, incidence_period=incidence_period,
-                                       n_locations=n_locations, response=response, repo_root_dirpath=repo_root_dirpath,
+                                       n_locations=n_locations, response=response, repo_root_dirpath=repo_root_dirpath, hub_components_dirpath=hub_components_dirpath,
                                        locations_considered=training_locations_considered)
               }
             fit = fitter(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing)
