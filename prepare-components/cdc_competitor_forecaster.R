@@ -5,6 +5,9 @@
 # and reformat to make compatible with our evaluator.
 #----------------------------------------#
 
+current_or_next_monday <- function(date) {
+  date + (8L - as.POSIXlt(date)$wday) %% 7L
+}
 
 make_cdc_competitor_forecaster <- function(path_to_competitor_dir, response = "jhu-csse_deaths_incidence_num",
                                            ahead = 1, target_period = "epiweek",
@@ -29,13 +32,32 @@ make_cdc_competitor_forecaster <- function(path_to_competitor_dir, response = "j
     competitor_raw_forecast_files <- list.files(path_to_competitor_dir) %>% 
       subset(.,grepl("csv",.))
     competitor_forecast_dates_all <- as.Date(gsub("^([^-]*-[^-]*-[^-]*)-.*$","\\1",competitor_raw_forecast_files))
-    competitor_forecast_date <- max(competitor_forecast_dates_all[competitor_forecast_dates_all <= forecast_date])
+    competitor_forecast_dates_visible <- competitor_forecast_dates_all[competitor_forecast_dates_all <= forecast_date]
+    if (length(competitor_forecast_dates_visible) == 0L) {
+      ## no submissions visible from this forecaster visible on the forecast date
+      ## return (tibble::tibble(location=character(0L), probs=numeric(0L), quantiles=numeric(0L)))
+      ## return (tibble::tibble(location=character(0L), forecast_date=as.Date(character(0L)), forecast_distribution=list()))
+      return (NA)
+    }
+    competitor_forecast_date_candidate = max(competitor_forecast_dates_visible)
+    if (abs(current_or_next_monday(competitor_forecast_date_candidate) - current_or_next_monday(forecast_date)) > 0.1) {
+      if (current_or_next_monday(competitor_forecast_date_candidate) > current_or_next_monday(forecast_date)) {
+        ## bug or other issue
+        stop ('Unexpectedly had competitor forecast date from later submission cycle than forecast date.')
+      } else {
+        ## competitor did not submit this cycle; candidate is from a prior cycle
+        ## return (tibble::tibble(location=character(0L), probs=numeric(0L), quantiles=numeric(0L)))
+        ## return (tibble::tibble(location=character(0L), forecast_date=as.Date(character(0L)), forecast_distribution=list()))
+        return (NA)
+      }
+    } else {
+      competitor_forecast_date = competitor_forecast_date_candidate
+    }
     if(forecast_date != competitor_forecast_date)
       warning(paste0("Forecast date is ", forecast_date, ", competitor uploaded on ", competitor_forecast_date))
     path_to_competitor_csv <- file.path(path_to_competitor_dir,
       competitor_raw_forecast_files[grepl(competitor_forecast_date,competitor_raw_forecast_files)]
       )
-    
     # Load competitor's raw forecasts
     competitor_raw_forecast_df <- read_csv(path_to_competitor_csv, 
                                            col_types = cols(
@@ -82,6 +104,7 @@ make_cdc_competitor_forecaster <- function(path_to_competitor_dir, response = "j
       
       # Use **our** JHU CSSE data as a representation for cumulative deaths as of the forecast date
       last_observed_date <- MMWRweek2Date(2020, min(competitor_cum_forecast_df$epiweek) - 1, 7)
+      ## fixme
       cum_death_df <- df %>% filter(variable_name == "jhu-csse_deaths_cumulative_num" &
                                     reference_date == last_observed_date) %>%
        mutate(epiweek = min(competitor_cum_forecast_df$epiweek) - 1) %>%
