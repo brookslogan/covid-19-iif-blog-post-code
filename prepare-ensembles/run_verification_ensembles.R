@@ -54,7 +54,6 @@ for (ahead in 1L) {
         ensemble_forecaster = ensemble_forecasters[[ensemble_forecaster_i]]
         ensemble_forecaster_name = names(ensemble_forecasters)[[ensemble_forecaster_i]]
         cat(sprintf("GENERATING FORECASTS FOR FORECASTER %s...\n", ensemble_forecaster_name))
-
         output_path  <- fs::path(output_path_1, forecast_date, ahead, response, geo_type, incidence_period, n_locations, ensemble_forecaster_name)
         try({
           ## if (!file.exists(fs::path(output_path, "scorecard.RDS"))) {
