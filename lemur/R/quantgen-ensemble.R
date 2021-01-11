@@ -151,7 +151,7 @@ impute_quantile_forecasts = function(qf) {
   return(result)
 }
 
-fit_quantgen_ensemble = function(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing, lp_solver="gurobi") {
+fit_quantgen_ensemble = function(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing, lp_solver="gurobi", noncross, component_forecasts) {
   qf$forecasts = qf$forecasts[,,as.character(fit_taus)]
   na_mask = apply(qf$forecasts,1,function(arr) { all(is.na(arr))}) | is.na(qf$actual)
   qf$actual = qf$actual[!na_mask]
@@ -160,8 +160,10 @@ fit_quantgen_ensemble = function(qf, forecasters, fit_taus, intercept, unit_sum,
     qf = impute_quantile_forecasts(qf)
   }
   na_preds = apply(qf$forecasts,1,function(arr) { any(is.na(arr))})
-  st_obj = quantile_ensemble(qf$forecasts[!na_preds,,], qf$actual[!na_preds], fit_taus, tau_groups = tau_groups, noncross = FALSE, lp_solver=lp_solver,
-                             intercept = intercept, unit_sum = unit_sum, verbose=FALSE)
+  qarr_arg = qf$forecasts[!na_preds,,]
+  q0 = abind::abind(qarr_arg, component_forecasts[["forecasts"]], along=1L)
+  st_obj = quantile_ensemble(qarr_arg, qf$actual[!na_preds], fit_taus, tau_groups = tau_groups, noncross = noncross, lp_solver=lp_solver,
+                             intercept = intercept, unit_sum = unit_sum, verbose=FALSE, q0=q0)
   orig_weights = st_obj[["alpha"]]
   ## Adjust weights based on number of missing forecasts for each forecaster
   if (impute_missing) {
@@ -203,6 +205,7 @@ fit_quantgen_ensemble = function(qf, forecasters, fit_taus, intercept, unit_sum,
   }
   return (list(
     st_obj=st_obj,
+    qarr_arg=qarr_arg,
     weights=st_obj[["alpha"]],
     forecasters=forecasters,
     orig_weights=orig_weights
@@ -263,7 +266,8 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                                             lp_solver = "glpk",
                                             hub_components_dirpath=get_hub_components_dirpath(repo_root_dirpath),
                                             mask_criterion = c("nonmissing_training_50states", "not_all_testing_missing"),
-                                            impute_test_forecasts = FALSE) {
+                                            impute_test_forecasts = FALSE,
+                                            noncross = FALSE) {
     debug_weights_mode <- match.arg(debug_weights_mode)
     mask_criterion <- match.arg(mask_criterion)
     my_forecaster = function(df, forecast_date, observations_tbl=NULL) {
@@ -297,6 +301,9 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
         original_component_forecasts = component_forecasts
         forecasters = forecasters[mask]
         component_forecasts$forecasts = component_forecasts$forecasts[,mask,]
+        if (impute_test_forecasts) {
+          component_forecasts <- impute_quantile_forecasts(component_forecasts)
+        }
 
         success = tryCatch(expr={
             qf =
@@ -307,7 +314,7 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
                                        n_locations=n_locations, response=response, repo_root_dirpath=repo_root_dirpath, hub_components_dirpath=hub_components_dirpath,
                                        locations_considered=training_locations_considered)
               }
-            fit = fitter(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing, lp_solver=lp_solver)
+            fit = fitter(qf, forecasters, fit_taus, intercept, unit_sum, tau_groups, impute_missing, lp_solver=lp_solver, noncross=noncross, component_forecasts=component_forecasts)
             success = 0
         },error = function(c) {
             print(c$message)
@@ -320,7 +327,6 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
         }
 
         if (impute_test_forecasts) {
-          component_forecasts <- impute_quantile_forecasts(component_forecasts)
           missingness_df = reshape2::melt(component_forecasts[["missing_arr"]], value.name = "Missing")
           weights_mat = fit[["weights"]]
           dimnames(weights_mat) <- list(Forecaster = fit[["forecasters"]], Quantile = as.character(cdc_probs))
@@ -345,7 +351,7 @@ quantgen_ensemble_forecaster_v0 <- function(response, incidence_period, ahead,
           }
           debug_weights_object =
             switch(debug_weights_mode,
-                   "fit" = fit[names(fit) != "st_obj"],
+                   "fit" = fit[names(fit) != "qarr_arg"],
                    "extra_info" = c(
                      fit,
                      list(extra_info=list(
