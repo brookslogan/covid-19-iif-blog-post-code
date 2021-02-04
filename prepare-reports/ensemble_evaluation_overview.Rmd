@@ -214,12 +214,12 @@ forecaster.labels = if (!identical(params[["forecaster_labels"]], "DEFAULT")) {
 ##   ) %>%
 ##   dplyr::mutate(value = dplyr::coalesce(value_corrected, value_original)) %>%
 ##   dplyr::select(-value_corrected, -value_original) %>%
-corrected.df =
-  readRDS("../../covid-19-iif-blog-post-data/signals/upstream_df_state_2020-10-11_final_corrected_trimmed.RDS") %>%
-  dplyr::filter(variable_name == response) %>%
-  dplyr::group_by(location, location_name, issue_date) %>%
-  dplyr::arrange(reference_date) %>%
-  dplyr::mutate(value7 = zoo::rollsumr(value, 7L, na.pad=TRUE))
+## corrected.df =
+##   readRDS("../../covid-19-iif-blog-post-data/signals/upstream_df_state_2020-10-11_final_corrected_trimmed.RDS") %>%
+##   dplyr::filter(variable_name == response) %>%
+##   dplyr::group_by(location, location_name, issue_date) %>%
+##   dplyr::arrange(reference_date) %>%
+##   dplyr::mutate(value7 = zoo::rollsumr(value, 7L, na.pad=TRUE))
 
 median_k = 12L
 
@@ -292,9 +292,10 @@ sc = scorecards %>%
   dplyr::group_by(forecaster, forecast_date) %>%
   dplyr::group_split()
   
-sc_df = scorecards %>%
-  dplyr::left_join(corrected.df, by=c("location", "location_name", "forecast_date"="reference_date"), suffix=c("_sc", "_fcdate")) %>%
-  dplyr::rename(value_fcdate = value, value7_fcdate = value7)
+sc_df = scorecards
+## sc_df = scorecards %>%
+##   dplyr::left_join(corrected.df, by=c("location", "location_name", "forecast_date"="reference_date"), suffix=c("_sc", "_fcdate")) %>%
+##   dplyr::rename(value_fcdate = value, value7_fcdate = value7)
 
 ## has_na <- sc %>% map_lgl(~ any(is.na(.x$err))) %>% which()
 ## scorecard_meta <- scorecard_meta[-has_na, ]
@@ -359,24 +360,24 @@ sc_df %>%
 ggsave(paste0(plot_prefix,"log_wis_boxplot.pdf"),width=7,height=5,units="in")
 ```
 
-Latest-relative boxplot:
+Latest-relative boxplot (disabled).
 ```{r}
-sc_df %>% 
-  ggplot(aes(x = fc, y = err/(value7_fcdate+1), colour = fc)) +
-  geom_boxplot() + 
-  geom_point(aes(y=y, shape=Annotation),
-             data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err/(value7_fcdate+1)), .groups="drop_last") %>% mutate(Annotation="Mean"),
-             size=3
-             ) +
-  ## geom_hline(aes(yintercept=y, colour=fc),
-  ##            data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err/(value7_fcdate+1)), .groups="drop_last") %>% mutate(Annotation="Mean")
-  ##            ) +
-  facet_wrap(~ ahead_str) + 
-  scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
-  scale_colour_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
-  labs(x="Forecaster", y="WIS relative to past week's value plus one") +
-  coord_flip()
-ggsave(paste0(plot_prefix,"pastrel_wis_boxplot.pdf"),width=7,height=5,units="in")
+## sc_df %>% 
+##   ggplot(aes(x = fc, y = err/(value7_fcdate+1), colour = fc)) +
+##   geom_boxplot() + 
+##   geom_point(aes(y=y, shape=Annotation),
+##              data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err/(value7_fcdate+1)), .groups="drop_last") %>% mutate(Annotation="Mean"),
+##              size=3
+##              ) +
+##   ## geom_hline(aes(yintercept=y, colour=fc),
+##   ##            data=function(df) df %>% group_by(fc, ahead_str) %>% summarize(y=mean(err/(value7_fcdate+1)), .groups="drop_last") %>% mutate(Annotation="Mean")
+##   ##            ) +
+##   facet_wrap(~ ahead_str) + 
+##   scale_x_discrete(limits=rev(forecaster_names), labels=forecaster.labels) +
+##   scale_colour_manual(name="Forecaster", values=forecaster.colors, labels=forecaster.labels, guide=FALSE) +
+##   labs(x="Forecaster", y="WIS relative to past week's value plus one") +
+##   coord_flip()
+## ggsave(paste0(plot_prefix,"pastrel_wis_boxplot.pdf"),width=7,height=5,units="in")
 ```
 
 Untransformed WIS violinplot:

@@ -103,16 +103,19 @@ get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahea
     if (!is.null(inconly_forecasters_override)) {
       inconly_forecasters <- inconly_forecasters_override
     }
+    verification_matched_forecasters = c("CEID-Walk", "CMU-TimeSeries", "Covid19Sim-Simulator", "COVIDhub-baseline",  "CU-nochange", "CU-scenario_high", "CU-scenario_low", "CU-scenario_mid",  "CU-select", "DDS-NBDS", "epiforecasts-ensemble1", "GT-DeepCOVID",  "IowaStateLW-STEM", "JHUAPL-Bucky", "JHU_IDD-CovidSP", "Karlen-pypm",  "LANL-GrowthRate", "MOBS-GLEAM_COVID", "NotreDame-FRED", "NotreDame-mobility",  "OliverWyman-Navigator", "PSI-DRAFT", "RobertWalraven-ESG", "RPI_UW-Mob_Collision",  "SteveMcConnell-CovidComplete", "UA-EpiCovDA", "UCLA-SuEIR",  "UCM_MESALab-FoGSEIR", "UCSD_NEU-DeepGLEAM", "UMass-MechBayes",  "UMich-RidgeTfReg", "YYG-ParamSearch", "UT-Mobility", "CovidAnalytics-DELPHI" )
+    verification_narrow_forecasters = setdiff(verification_matched_forecasters, c("CovidAnalytics-DELPHI", "COVIDhub-baseline", "CU-scenario_high",  "CU-scenario_mid", "CU-select", "epiforecasts-ensemble1", "JHUAPL-Bucky",  "MOBS-GLEAM_COVID", "NotreDame-FRED", "OliverWyman-Navigator",  "UMich-RidgeTfReg", "YYG-ParamSearch"))
     comb4 = c("aardvark_cookies_and_cream","poiszero","zyzzyva_covidcast")
     fit_taus = cdc_probs
     fit_taus3 = c(0.2,0.5,0.8)
     tau_groups3 = c(rep(1, 4), rep(2, 15), rep(3, 4))
+    tau_groups_verification = c(rep(1, 4), rep(2, 15), rep(3, 4))
     calike_locations = strsplit("06;48;12;36;42;17;39;13;37;26;34;51;53;04;25;47;18;29;24;55", ";")[[1L]]
     get_debug_weights_folder <- function(ensemble_name) {
       if (is.null(debug_weights_folder_suffix)) {
         NULL
       } else {
-        paste0(file.path(repo_root_dirpath, "debug_quantgen_weights", "ensemble1_cdc_inconly"), debug_weights_folder_suffix)
+        paste0(file.path(repo_root_dirpath, "debug_quantgen_weights", ensemble_name), debug_weights_folder_suffix)
       }
     }
     lapply(
@@ -631,6 +634,112 @@ get_dev_forecasters  <- function(response, incidence_period = c("epiweek"), ahea
            repo_root_dirpath = repo_root_dirpath,
            hub_components_dirpath = inconly_components_dirpath
          )
-        )
+       , ensemble3_4times_cdc_inconly_verification = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                                     repo_root_dirpath = repo_root_dirpath,
+                                                                                     forecasters=inconly_forecasters, tau_groups=tau_groups_verification, impute_missing = TRUE,
+                                                                                     fit_taus = fit_taus,
+                                                                                     n_traindays = 4L,
+                                                                                     hub_components_dirpath = inconly_components_dirpath,
+                                                                                     mask_criterion = "not_all_testing_missing",
+                                                                                     impute_test_forecasts = TRUE,
+                                                                                     noncross = TRUE,
+                                                                                     debug_weights_mode = "extra_info",
+                                                                                     debug_weights_folder = get_debug_weights_folder("ensemble3_4times_cdc_inconly_verification"))
+       , ensemble3_8times_cdc_inconly_verification = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                                     repo_root_dirpath = repo_root_dirpath,
+                                                                                     forecasters=inconly_forecasters, tau_groups=tau_groups_verification, impute_missing = TRUE,
+                                                                                     fit_taus = fit_taus,
+                                                                                     n_traindays = 8L,
+                                                                                     hub_components_dirpath = inconly_components_dirpath,
+                                                                                     mask_criterion = "not_all_testing_missing",
+                                                                                     impute_test_forecasts = TRUE,
+                                                                                     noncross = TRUE,
+                                                                                     debug_weights_mode = "extra_info",
+                                                                                     debug_weights_folder = get_debug_weights_folder("ensemble3_8times_cdc_inconly_verification"))
+    , qspace_ew_mean_ens_v1_inconly_verification = untrained_qspace_ensemble_forecaster_v1(
+        response, incidence_period, ahead, forecast_date, geo_type, n_locations,
+        ensemble_function = mean,
+        required_forecaster_names = character(0L),
+        include_all_other_forecasters = FALSE,
+        optional_forecaster_names = inconly_forecasters,
+        shared_naming_scheme = common_naming_scheme,
+        repo_root_dirpath = repo_root_dirpath,
+        hub_components_dirpath = inconly_components_dirpath
+      )
+    , qspace_ew_md_ens_v1_inconly_verification = untrained_qspace_ensemble_forecaster_v1(
+        response, incidence_period, ahead, forecast_date, geo_type, n_locations,
+        ensemble_function = median,
+        required_forecaster_names = character(0L),
+        include_all_other_forecasters = FALSE,
+        optional_forecaster_names = inconly_forecasters,
+        shared_naming_scheme = common_naming_scheme,
+        repo_root_dirpath = repo_root_dirpath,
+        hub_components_dirpath = inconly_components_dirpath
+      )
+    , ensemble3_4times_cdc_matched_verification = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                                  repo_root_dirpath = repo_root_dirpath,
+                                                                                  forecasters=verification_matched_forecasters, tau_groups=tau_groups_verification, impute_missing = TRUE,
+                                                                                  fit_taus = fit_taus,
+                                                                                  n_traindays = 4L,
+                                                                                  hub_components_dirpath = inconly_components_dirpath,
+                                                                                  mask_criterion = "not_all_testing_missing",
+                                                                                  impute_test_forecasts = TRUE,
+                                                                                  noncross = TRUE,
+                                                                                  debug_weights_mode = "extra_info",
+                                                                                  debug_weights_folder = get_debug_weights_folder("ensemble3_4times_cdc_matched_verification"))
+    , ensemble3_8times_cdc_matched_verification = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                                  repo_root_dirpath = repo_root_dirpath,
+                                                                                  forecasters=verification_matched_forecasters, tau_groups=tau_groups_verification, impute_missing = TRUE,
+                                                                                  fit_taus = fit_taus,
+                                                                                  n_traindays = 8L,
+                                                                                  hub_components_dirpath = inconly_components_dirpath,
+                                                                                  mask_criterion = "not_all_testing_missing",
+                                                                                  impute_test_forecasts = TRUE,
+                                                                                  noncross = TRUE,
+                                                                                  debug_weights_mode = "extra_info",
+                                                                                  debug_weights_folder = get_debug_weights_folder("ensemble3_8times_cdc_matched_verification"))
+    , qspace_ew_mean_ens_v1_matched_verification = untrained_qspace_ensemble_forecaster_v1(
+        response, incidence_period, ahead, forecast_date, geo_type, n_locations,
+        ensemble_function = mean,
+        required_forecaster_names = character(0L),
+        include_all_other_forecasters = FALSE,
+        optional_forecaster_names = verification_matched_forecasters,
+        shared_naming_scheme = common_naming_scheme,
+        repo_root_dirpath = repo_root_dirpath,
+        hub_components_dirpath = inconly_components_dirpath
+      )
+    , qspace_ew_md_ens_v1_matched_verification = untrained_qspace_ensemble_forecaster_v1(
+        response, incidence_period, ahead, forecast_date, geo_type, n_locations,
+        ensemble_function = median,
+        required_forecaster_names = character(0L),
+        include_all_other_forecasters = FALSE,
+        optional_forecaster_names = verification_matched_forecasters,
+        shared_naming_scheme = common_naming_scheme,
+        repo_root_dirpath = repo_root_dirpath,
+        hub_components_dirpath = inconly_components_dirpath
+      )
+    , ensemble3_4times_cdc_narrow_verification = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                                  repo_root_dirpath = repo_root_dirpath,
+                                                                                  forecasters=verification_narrow_forecasters, tau_groups=tau_groups_verification, impute_missing = TRUE,
+                                                                                  fit_taus = fit_taus,
+                                                                                  n_traindays = 4L,
+                                                                                  hub_components_dirpath = inconly_components_dirpath,
+                                                                                  mask_criterion = "not_all_testing_missing",
+                                                                                  impute_test_forecasts = TRUE,
+                                                                                  noncross = TRUE,
+                                                                                  debug_weights_mode = "extra_info",
+                                                                                  debug_weights_folder = get_debug_weights_folder("ensemble3_4times_cdc_narrow_verification"))
+    , ensemble3_8times_cdc_narrow_verification = quantgen_ensemble_forecaster_v0(response, incidence_period, ahead, geo_type, n_locations,
+                                                                                  repo_root_dirpath = repo_root_dirpath,
+                                                                                  forecasters=verification_narrow_forecasters, tau_groups=tau_groups_verification, impute_missing = TRUE,
+                                                                                  fit_taus = fit_taus,
+                                                                                  n_traindays = 8L,
+                                                                                  hub_components_dirpath = inconly_components_dirpath,
+                                                                                  mask_criterion = "not_all_testing_missing",
+                                                                                  impute_test_forecasts = TRUE,
+                                                                                  noncross = TRUE,
+                                                                                  debug_weights_mode = "extra_info",
+                                                                                  debug_weights_folder = get_debug_weights_folder("ensemble3_8times_cdc_narrow_verification"))
+      )
     )
 }

@@ -17,7 +17,7 @@ Authors@R:
 Description: The lemur forecaster.
 License: MIT + file LICENSE
 Encoding: UTF-8
-Imports: pipeR, data.table, tibble, fs, dplyr, tibble, quantgen, quadprog, stringi
+Imports: pipeR, data.table, tibble, fs, dplyr, tibble, quantgen, quadprog, stringi, abind
 Suggests: testthat
 Remotes: github::ryantibs/quantgen/R-package/quantgen
 Roxygen: list(markdown = TRUE)
