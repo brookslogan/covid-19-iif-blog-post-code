@@ -29,7 +29,7 @@ all_scores <- calc_retrospective_ensemble_scores(
   forecast_dates = forecast_dates,
   spatial_scales = "state",
   response_vars = c("inc_case", "inc_death"),
-  truth_as_of = "2021-01-31"
+  truth_as_of = "2021-02-14"
 )
 
 # filter out location 60 (American Samoa) for early forecast dates when such
@@ -39,13 +39,27 @@ all_scores <- all_scores %>%
     !(location == "60" & forecast_date < "2020-07-13")
   )
 
+# filter out the first trained ensemble forecast date for each target --
+# the prospective selection method isn't available for those dates.
+# NOTE: we decided not to include the prospective selection method in this blog
+# post, so comment out this filter for now
+
+# all_scores <- all_scores %>%
+#   dplyr::filter(
+#     (target_variable == "inc death" & forecast_date > "2020-06-22") |
+#     (target_variable == "inc case" & forecast_date > "2020-09-14")
+#   )
+
 # extract more useful variables describing ensemble formulation
 all_model_cases <- purrr::map_dfr(
   unique(all_scores$model),
   function(x) {
     parse_model_case(x) %>% dplyr::mutate(model = x)
   }
-)
+) %>%
+  dplyr::mutate(
+    combine_method = ifelse(is.na(combine_method), "prospective_selection", combine_method)
+  )
 
 all_scores <- all_scores %>%
   dplyr::left_join(all_model_cases, by = "model")
