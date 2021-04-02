@@ -4,6 +4,7 @@ library(ggpubr)
 library(grid)
 library(gridExtra)
 library(ggnewscale)
+library(scales)
 
 all_scores <- readRDS(
   "../covid-19-iif-blog-post-data/post2/retrospective-scores/retrospective_scores.rds") %>%
@@ -262,9 +263,10 @@ p_cases <- ggplot() +
       "Trained, Full History" = blues[8])
   ) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  scale_y_continuous(labels = comma) +
   ylab("") +
   xlab("") +
-  ggtitle("Incident Cases") +
+  ggtitle("Cases") +
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
@@ -303,9 +305,10 @@ p_deaths <- ggplot() +
       "Trained, Full History" = blues[8])
   ) +
   scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
+  scale_y_continuous(labels = comma) +
   ylab("") +
   xlab("") +
-  ggtitle("Incident Deaths") +
+  ggtitle("Deaths") +
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1),
@@ -385,7 +388,7 @@ legend_wis_horiz <- ggpubr::get_legend(p_wis_temp, position = "bottom")
 png("../covid-19-iif-blog-post-data/post2/figures/scores_by_week_with_data_legend_bottom.png", width = 8, height = 8, units = "in", res = 600)
 plot_layout <- grid.layout(
   nrow = 8, ncol = 3,
-  widths = unit(c(1, 0.925, 0.9), c("lines", rep("null", 3))),
+  widths = unit(c(2, 0.925, 0.9), c("lines", rep("null", 3))),
   heights = unit(c(1.5, rep(1, 5), 1.5, 3), c("lines", rep("null", 5), "lines", "lines")))
 
 grid.newpage()
@@ -398,12 +401,23 @@ grid.text("Forecast Creation Date",
   just = "center",
   gp = gpar(fontsize = 11),
   vp = viewport(layout.pos.row = 7, layout.pos.col = 2:3))
-grid.text("Incidence",
+grid.text("    Weekly\n    Cases or Deaths",
   just = "center",
   rot = 90,
   gp = gpar(fontsize = 11),
   vp = viewport(layout.pos.row = 2, layout.pos.col = 1))
-grid.text("Mean WIS",
+
+print(
+  ggplot() +
+    geom_line(
+      data = data.frame(x = c(1, 1), y = c(0.095, 0.97)),
+      mapping = aes(x = x, y = y)) +
+    xlim(0, 1) +
+    scale_y_continuous(limits = c(0, 1), expand = expansion(0, 0)) +
+    theme_void(),
+  vp = viewport(layout.pos.row = 3:6, layout.pos.col = 1)
+)
+grid.text("                 Mean WIS",
   just = "center",
   rot = 90,
   gp = gpar(fontsize = 11),

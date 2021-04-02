@@ -4,6 +4,7 @@ library(ggpubr)
 library(grid)
 library(gridExtra)
 library(ggnewscale)
+library(scales)
 
 all_scores <- readRDS(
   "../covid-19-iif-blog-post-data/post2/retrospective-scores/retrospective_scores.rds") %>%
@@ -58,7 +59,7 @@ p <- ggplot() +
     shape = "+",
     size = 7) +
   facet_wrap( ~ target_variable, scales = "free_y") +
-  scale_y_log10() +
+  scale_y_log10(labels = comma) +
   xlab("Ensemble Model") +
   ylab("WIS (log scale)") +
   theme_bw() +

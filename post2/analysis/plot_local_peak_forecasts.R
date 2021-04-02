@@ -1,5 +1,6 @@
 library(dplyr)
 library(ggplot2)
+library(scales)
 library(covidData)
 library(covidHubUtils)
 
@@ -153,7 +154,8 @@ p <-
   ggplot2::scale_linetype("Data Version") +
   ggplot2::facet_wrap(~ model) +
   ggplot2::xlab("Date") +
-  ggplot2::ylab("Incident Cases") +
+  ggplot2::ylab("Weekly Cases") +
+  scale_y_continuous(labels = comma) +
 #  ggplot2::ggtitle("Forecasts of Incident Deaths in Ohio Generated Feb. 15, 2021") +
   ggplot2::theme_bw() +
   ggplot2::theme(axis.text.x = element_text(angle = 45, hjust = 1))
